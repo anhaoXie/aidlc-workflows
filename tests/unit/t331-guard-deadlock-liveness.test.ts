@@ -3,7 +3,8 @@
 // function:reviewInvalidationAttemptView, function:attemptEventAfterFrontier,
 // function:reviewAttemptAccounting, function:worktreeReviewAttemptProjection,
 // function:candidateReviewCoverageProjection, function:evaluateGuardRefusal,
-// function:requestChangesResetIsExecutable, function:requestChangesReportCommand,
+// function:requestChangesResetIsExecutable, function:requestChangesReportArgs,
+// function:requestChangesReportCommand,
 // function:guardRefusalStreakView,
 // function:recordGuardRefusal, function:guardRefusalOutput,
 // function:guardRecoveryAskForRefusal, function:guardTerminalAskForRefusal,
@@ -66,6 +67,7 @@ import {
   recordGuardRefusal,
   readAllAuditShards,
   recoveryGuidance,
+  requestChangesReportArgs,
   requestChangesReportCommand,
   requestChangesResetIsExecutable,
   reviewInvalidationAttemptView,
@@ -2641,18 +2643,21 @@ describe("AttemptView projections and refusal streaks", () => {
     const refused = run(STATE_TOOL, ["approve", slug]);
     expect(refused.status).not.toBe(0);
     expect(refused.out).toContain("Request Changes decision resets the review attempt");
+    const report = requestChangesReportCommand(project, slug, undefined);
+    expect(refused.out).toContain(report);
+    expect(refused.out).toContain("adding it as a shell-safe `--reason` value");
 
-    // The exit the refusal has to name is checked first, so the red below is
-    // only about the wording: the report is accepted from the very state that
-    // refused, and it is the sole producer of the boundary event.
+    // Follow the named report with the exact feedback its instruction requires:
+    // it is accepted from the refused state and produces the boundary event.
+    const feedback = "split the latency requirement in two";
     const rejected = run(ORCHESTRATE_TOOL, [
-      "report", "--stage", slug, "--result", "rejected",
-      "--reason", "split the latency requirement in two",
+      ...requestChangesReportArgs(slug, undefined, undefined),
+      "--reason", feedback,
     ]);
     expect(rejected.status, rejected.out).toBe(0);
-    expect(readAllAuditShards(project)).toContain("**Event**: GATE_REJECTED");
-
-    expect(refused.out).toContain(`report --stage ${slug} --result rejected`);
+    const audit = readAllAuditShards(project);
+    expect(audit).toContain("**Event**: GATE_REJECTED");
+    expect(audit).toContain(`**Feedback**: ${feedback}`);
   });
 
   test("every way on put to the person reads in plain words; the agent's own carry none", () => {
