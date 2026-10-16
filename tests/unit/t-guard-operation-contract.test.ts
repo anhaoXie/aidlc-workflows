@@ -540,7 +540,16 @@ describe("recovery selection records the next interaction", () => {
     const current = readActiveDirectiveMarker(project, state)!;
     const markerPath = join(seededRecordDir(project), ".aidlc-engine", "active-directive.json");
     const legacy = JSON.parse(readFileSync(markerPath, "utf-8"));
-    legacy.remedies[0].op = "unset-unattended";
+    legacy.remedies[0] = {
+      ...legacy.remedies[0],
+      op: "unset-unattended",
+      label: "Stop working unattended",
+      action:
+        "Halt unattended execution and ask a human what should change. " +
+        'Unset AIDLC_UNATTENDED, ask "What should change?" for stage ' +
+        '"requirements-analysis", and end the turn. Only after the human ' +
+        "answers may their exact text be submitted as the Request Changes reason.",
+    };
     legacy.guard_recovery_response.selected_op = "unset-unattended";
     writeFileSync(markerPath, `${JSON.stringify(legacy)}\n`);
 

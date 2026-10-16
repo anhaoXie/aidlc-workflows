@@ -12,6 +12,7 @@
 // function:humanAuthorityState,
 // function:normalizeGuardRecoveryText, function:consumeSharedDirectiveAsk,
 // function:guardRecoveryFeedbackStatus, function:guardPreflight,
+// function:sameGuardRecoveryRemedy, function:guardRecoveryAskMarkerIsCurrent,
 // directive:guard-recovery
 
 import {
@@ -65,6 +66,7 @@ import {
   normalizeGuardRecoveryText,
   maximalAttemptEvents,
   recordGuardRefusal,
+  readActiveDirectiveMarker,
   readAllAuditShards,
   recoveryGuidance,
   requestChangesReportArgs,
@@ -2611,11 +2613,19 @@ describe("AttemptView projections and refusal streaks", () => {
       AIDLC_SKIP_REVIEWER_GATE_GUARD: "0",
       AIDLC_UNATTENDED: "0",
     };
-    const run = (tool: string, args: string[]) => {
+    const run = (
+      tool: string,
+      args: string[],
+      extraEnv: NodeJS.ProcessEnv = {},
+    ) => {
       const result = spawnSync(
         process.execPath,
         [tool, ...args, "--project-dir", project],
-        { timeout: remainingOperationTimeoutMs(NATIVE_STARTUP_TIMEOUT_MS), encoding: "utf-8", env },
+        {
+          timeout: remainingOperationTimeoutMs(NATIVE_STARTUP_TIMEOUT_MS),
+          encoding: "utf-8",
+          env: { ...env, ...extraEnv },
+        },
       );
       return { status: result.status ?? -1, out: `${result.stdout ?? ""}${result.stderr ?? ""}` };
     };
@@ -2690,6 +2700,36 @@ describe("AttemptView projections and refusal streaks", () => {
     });
     const feedback = "split the latency requirement in two";
     expect(consumeSharedDirectiveAsk(project, feedback)).toBe(true);
+    const answered = readActiveDirectiveMarker(project, content)!;
+    const markerPath = join(seededRecordDir(project), ".aidlc-engine", "active-directive.json");
+    const legacy = JSON.parse(readFileSync(markerPath, "utf-8"));
+    legacy.remedies[0] = {
+      ...legacy.remedies[0],
+      op: "unset-unattended",
+      label: "Stop working unattended",
+      action:
+        "Halt unattended execution and ask a human what should change. " +
+        `Unset AIDLC_UNATTENDED, ask "What should change?" for stage "${slug}", ` +
+        "and end the turn. Only after the human answers may their exact text be " +
+        "submitted as the Request Changes reason.",
+    };
+    legacy.guard_recovery_response.selected_op = "unset-unattended";
+    writeFileSync(markerPath, `${JSON.stringify(legacy)}\n`);
+
+    const resumed = run(ORCHESTRATE_TOOL, ["next"], {
+      AIDLC_UNATTENDED: "1",
+    });
+    expect(resumed.status, resumed.out).toBe(0);
+    const resumedDirective = JSON.parse(
+      resumed.out.split("\n").find((line) => line.startsWith("{"))!,
+    );
+    expect(resumedDirective.remedies[0].op).toBe("request-changes");
+    expect(resumedDirective.remedies[0].action).toContain(report);
+    const preserved = readActiveDirectiveMarker(project, content)!;
+    expect(preserved.guard_recovery_response).toEqual(
+      answered.guard_recovery_response,
+    );
+    expect(preserved.delivery).toBe(answered.delivery);
 
     // Follow the named report with the exact feedback its instruction requires:
     // it is accepted from the refused state and produces the boundary event.
