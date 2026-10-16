@@ -2618,13 +2618,17 @@ describe("AttemptView projections and refusal streaks", () => {
       args: string[],
       extraEnv: NodeJS.ProcessEnv = {},
     ) => {
+      const childEnv = { ...env, ...extraEnv };
+      for (const [key, value] of Object.entries(childEnv)) {
+        if (value === undefined) delete childEnv[key];
+      }
       const result = spawnSync(
         process.execPath,
         [tool, ...args, "--project-dir", project],
         {
           timeout: remainingOperationTimeoutMs(NATIVE_STARTUP_TIMEOUT_MS),
           encoding: "utf-8",
-          env: { ...env, ...extraEnv },
+          env: childEnv,
         },
       );
       return { status: result.status ?? -1, out: `${result.stdout ?? ""}${result.stderr ?? ""}` };
@@ -2717,7 +2721,7 @@ describe("AttemptView projections and refusal streaks", () => {
     writeFileSync(markerPath, `${JSON.stringify(legacy)}\n`);
 
     const resumed = run(ORCHESTRATE_TOOL, ["next"], {
-      AIDLC_UNATTENDED: "1",
+      AIDLC_UNATTENDED: undefined,
     });
     expect(resumed.status, resumed.out).toBe(0);
     const resumedDirective = JSON.parse(

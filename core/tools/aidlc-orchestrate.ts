@@ -1945,34 +1945,49 @@ function sameGuardRecoveryRemedy(
   ) {
     return false;
   }
-  if (
-    !current.action.startsWith(
-      "Halt unattended execution and ask a human what should change. ",
-    )
-  ) {
+  const unattendedStart =
+    "Halt unattended execution and ask a human what should change. " +
+    'Unset AIDLC_UNATTENDED, ask "What should change?" for stage ';
+  const attendedStart =
+    "When the person already said what should change for stage ";
+  const targetStart = current.action.startsWith(unattendedStart)
+    ? unattendedStart
+    : current.action.startsWith(attendedStart)
+      ? attendedStart
+      : null;
+  if (targetStart === null) return false;
+  const targetEnd = current.action.indexOf(
+    targetStart === unattendedStart
+      ? ", and end the turn."
+      : ", submit Request Changes",
+    targetStart.length,
+  );
+  if (targetEnd === -1) return false;
+  const target = current.action.slice(targetStart.length, targetEnd);
+  if (!/^"[a-z][a-z0-9-]*"(?: for Unit "[A-Za-z0-9._-]+")?$/.test(target)) {
     return false;
   }
-  const answer = "Only after the human answers, ";
-  const answerAt = current.action.indexOf(answer);
-  if (answerAt === -1) return false;
   const costAt = current.action.indexOf(
     " Construction runs one unit at a time here, so ",
-    answerAt,
+    targetEnd,
   );
-  const request = current.action.slice(
-    answerAt,
-    costAt === -1 ? undefined : costAt,
-  );
+  const request = current.action.slice(0, costAt === -1 ? undefined : costAt);
   if (
-    !request.startsWith(`${answer}submit Request Changes`) ||
+    !request.includes("submit Request Changes") ||
     !request.includes("`--reason`") ||
-    !request.endsWith("`.")
+    (
+      targetStart === unattendedStart
+        ? !request.endsWith("`.")
+        : !request.endsWith("Either way that unlocks revision and a fresh review.")
+    )
   ) {
     return false;
   }
   const cost = costAt === -1 ? "" : current.action.slice(costAt);
   return issued.action ===
-    current.action.slice(0, answerAt) +
+    "Halt unattended execution and ask a human what should change. " +
+      `Unset AIDLC_UNATTENDED, ask "What should change?" for stage ${target}, ` +
+      "and end the turn. " +
       "Only after the human answers may their exact text be submitted as the Request Changes reason." +
       cost;
 }
