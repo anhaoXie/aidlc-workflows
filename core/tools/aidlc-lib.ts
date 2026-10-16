@@ -31904,6 +31904,9 @@ function lifecycleResetRemedies(
       },
       { harnessDir: harnessDir() },
     );
+    const submitRequestChanges =
+      "submit Request Changes with their exact text unchanged, adding it as a shell-safe " +
+      `\`--reason\` value to \`${requestChangesReport}\``;
     if (input.humanAuthority.unattended) {
       return [
         {
@@ -31912,7 +31915,7 @@ function lifecycleResetRemedies(
             "Halt unattended execution and ask a human what should change. " +
             `Unset AIDLC_UNATTENDED, ask "What should change?" for stage ` +
             `"${reportStage}"${unitContext}, and end the turn. Only after the human ` +
-            "answers may their exact text be submitted as the Request Changes reason." +
+            `answers, ${submitRequestChanges}.` +
             cost("reject"),
           requiresHuman: true,
           executableNow: true,
@@ -31924,10 +31927,8 @@ function lifecycleResetRemedies(
         op: "request-changes",
         action:
           `When the person already said what should change for stage "${reportStage}"${unitContext}, ` +
-          "submit Request Changes with their exact text unchanged as a single-quoted --reason by " +
-          `running \`${requestChangesReport}\`. ` +
-          'Otherwise ask "What should change?" and end the turn, then submit their answer ' +
-          "the same way. Either way that unlocks revision and a fresh review." +
+          `${submitRequestChanges}. Otherwise ask "What should change?" and end the turn, then ` +
+          `${submitRequestChanges}. Either way that unlocks revision and a fresh review.` +
           cost("reject"),
         requiresHuman: true,
         executableNow: true,

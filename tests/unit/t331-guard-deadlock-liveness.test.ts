@@ -381,6 +381,32 @@ describe("bounded guard-remedy liveness", () => {
       // hands the conductor, both carry the report.
       expect(recoveryGuidance(project, content, stage), marker).toContain(report);
       expect(rejection?.action, marker).toContain(report);
+      expect(rejection?.action, marker).toContain(
+        "adding it as a shell-safe `--reason` value",
+      );
+
+      const unattended = evaluateGuardRefusal({
+        code: "REVIEW_RECOVERY_EXHAUSTED",
+        blockedAction: "review",
+        stage,
+        projectDir: project,
+        stateContent: content,
+        invariant:
+          "A review attempt can be reset only through a sanctioned boundary.",
+        userMessage: "",
+        attempt: {
+          recovery: "spent",
+          summaryCoverage: "current",
+          reviewCoverage: "stale",
+          sourceCoverage: "stale",
+        },
+        humanAuthority: { freshTurn: false, unattended: true },
+      });
+      expect(unattended.remedies[0]?.command, marker).toBeUndefined();
+      expect(unattended.remedies[0]?.action, marker).toContain(report);
+      expect(unattended.remedies[0]?.action, marker).toContain(
+        "Only after the human answers",
+      );
     }
   });
 
