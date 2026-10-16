@@ -3,7 +3,8 @@
 // function:reviewInvalidationAttemptView, function:attemptEventAfterFrontier,
 // function:reviewAttemptAccounting, function:worktreeReviewAttemptProjection,
 // function:candidateReviewCoverageProjection, function:evaluateGuardRefusal,
-// function:requestChangesResetIsExecutable, function:guardRefusalStreakView,
+// function:requestChangesResetIsExecutable, function:requestChangesReportCommand,
+// function:guardRefusalStreakView,
 // function:recordGuardRefusal, function:guardRefusalOutput,
 // function:guardRecoveryAskForRefusal, function:guardTerminalAskForRefusal,
 // function:guardRecoveryAskFromRefusalText, function:guardAttemptState,
@@ -65,6 +66,7 @@ import {
   recordGuardRefusal,
   readAllAuditShards,
   recoveryGuidance,
+  requestChangesReportCommand,
   requestChangesResetIsExecutable,
   reviewInvalidationAttemptView,
   reviewAttemptAccounting,
@@ -98,6 +100,14 @@ const REPO_ROOT = join(import.meta.dir, "..", "..");
 const STATE_TOOL = join(
   import.meta.dir,
   "../../dist/claude/.claude/tools/aidlc-state.ts",
+);
+const LOG_TOOL = join(
+  import.meta.dir,
+  "../../dist/claude/.claude/tools/aidlc-log.ts",
+);
+const ORCHESTRATE_TOOL = join(
+  import.meta.dir,
+  "../../dist/claude/.claude/tools/aidlc-orchestrate.ts",
 );
 const PACKAGED_HARNESSES = [
   { name: "claude", engineDir: ".claude" },
@@ -319,6 +329,59 @@ describe("bounded guard-remedy liveness", () => {
         remedy.command?.includes("<requested changes>")
       ),
     ).toBe(false);
+  });
+
+  // #1021: the sentence "Only a human Request Changes decision resets the
+  // review attempt" describes one step and names none. In Code Generation the
+  // Request Changes the person is actually shown is the Step 3 Plan Approval
+  // checkpoint, whose QUESTION_ANSWERED is no attempt boundary (the pin in
+  // "the Plan Approval Request Changes the person is shown is no review-attempt
+  // boundary"), so following the sentence at that surface changes nothing. The
+  // decision that does reset the attempt is the rejected report, which the
+  // engine already renders in one place, requestChangesReportCommand, and which
+  // the remedy and the prose guidance both leave unnamed. The step the sentence
+  // describes has to be the step it names.
+  test("#1021: the Request Changes that resets a review attempt is named as its report", () => {
+    const project = createTestProject();
+    projects.push(project);
+    const stage = "code-generation";
+    const report = requestChangesReportCommand(project, stage, undefined);
+    expect(report).toContain("--result rejected");
+    // Both states requestChangesResetIsExecutable admits, so the guidance is
+    // checked exactly where it is printed.
+    for (const marker of ["-", "?"] as const) {
+      const content =
+        `# AI-DLC State\n- **Scope**: enterprise\n- [${marker}] ${stage} — EXECUTE\n`;
+      expect(requestChangesResetIsExecutable(content, stage), marker).toBe(true);
+      const refusal = evaluateGuardRefusal({
+        code: "REVIEW_RECOVERY_EXHAUSTED",
+        blockedAction: "review",
+        stage,
+        projectDir: project,
+        stateContent: content,
+        invariant:
+          "A review attempt can be reset only through a sanctioned boundary.",
+        userMessage: "",
+        attempt: {
+          recovery: "spent",
+          summaryCoverage: "current",
+          reviewCoverage: "stale",
+          sourceCoverage: "stale",
+        },
+        humanAuthority: { freshTurn: false, unattended: false },
+      });
+      const rejection = refusal.remedies.find((remedy) =>
+        remedy.op === "request-changes"
+      );
+      expect(rejection, marker).toBeDefined();
+      // Still action-only: the person's words come before the report is run,
+      // so naming the report must not turn it into an executable command.
+      expect(rejection?.command, marker).toBeUndefined();
+      // The sentence the prose refusals interpolate, and the step the remedy
+      // hands the conductor, both carry the report.
+      expect(recoveryGuidance(project, content, stage), marker).toContain(report);
+      expect(rejection?.action, marker).toContain(report);
+    }
   });
 
   test("guard-recovery validation rejects unresolved or non-packaged commands", () => {
@@ -1714,6 +1777,63 @@ describe("AttemptView projections and refusal streaks", () => {
     expect(accounting.requestCount).toBe(0);
   });
 
+  // #1021, and the reason its fix belongs in the wording: the Plan Approval
+  // Request Changes a person is shown during a normal Construction walk records
+  // QUESTION_ANSWERED, and an Approve Plan records PLAN_APPROVAL_RECORDED.
+  // Neither is a review-attempt boundary, so neither returns a review pass or
+  // clears a pending request, while the rejected report's GATE_REJECTED does.
+  // Making an interview answer reset review accounting would give up the
+  // property #742 and #750 were closed to establish, so this stays as it is and
+  // the guidance names the report instead. The emission itself is pinned by
+  // t-routing-question-own-marker.
+  test("#1021: the Plan Approval Request Changes the person is shown is no review-attempt boundary", () => {
+    const rows = (boundary: AuditShardEvent | null) => [
+      event("WORKFLOW_STARTED", "2026-08-28T00:00:00Z", {}, "main.md", 0, 0),
+      event("REVIEW_REQUESTED", "2026-08-28T00:00:01Z", {
+        Stage: "code-generation", Reviewer: "reviewer", Unit: "alpha", Iteration: "1",
+      }, "main.md", 0, 1),
+      ...(boundary ? [boundary] : []),
+    ];
+    const accounting = (boundary: AuditShardEvent | null) => {
+      const all = rows(boundary);
+      const view: AttemptView = {
+        allEvents: all,
+        events: all,
+        floorIdx: 0,
+        mergedBoltUnits: new Set(),
+        openBoltUnits: new Set(),
+      };
+      return reviewAttemptAccounting(
+        "",
+        view,
+        state("-"),
+        { slug: "code-generation", for_each: "unit-of-work", workspace_requires: true },
+        "reviewer",
+        "alpha",
+        undefined,
+      );
+    };
+    const planChoice = (name: string, details: string) =>
+      event(name, "2026-08-28T00:00:02Z", {
+        Stage: "code-generation", Checkpoint: "plan-approval", Details: details, Unit: "alpha",
+      }, "main.md", 0, 2);
+    const untouched = accounting(null).floor;
+    expect(untouched).toContain("WORKFLOW_STARTED");
+    for (const [name, details] of [
+      ["QUESTION_ANSWERED", "Request Changes"],
+      ["PLAN_APPROVAL_RECORDED", "Approve Plan"],
+    ] as const) {
+      const after = accounting(planChoice(name, details));
+      expect(after.floor, name).toBe(untouched);
+      expect(after.requestCount, name).toBe(accounting(null).requestCount);
+    }
+    expect(
+      accounting(event("GATE_REJECTED", "2026-08-28T00:00:02Z", {
+        Stage: "code-generation", Feedback: "Change it.",
+      }, "main.md", 0, 2)).floor,
+    ).toContain("GATE_REJECTED");
+  });
+
   // A solo unit-major walk hands a Unit's finished step back when its work is
   // gone, and the Unit starts the step again: that run gets the stage's review
   // passes and its one stale-review recovery again, whether the step was
@@ -2437,6 +2557,76 @@ describe("AttemptView projections and refusal streaks", () => {
     // The person keeps today's way when the source cannot be read.
     expect(refusal("SOURCE_REVIEW_STALE", attempt("unreadable")).remedies.map((remedy) => remedy.op))
       .toEqual(["request-changes"]);
+  });
+
+  // #1021 at the process boundary: a write to a reviewed output after its
+  // terminal receipt, then the approve. The refusal the state tool prints tells
+  // the reader that a human Request Changes decision resets the review attempt
+  // and names only the recovery review, so the one step that does reset the
+  // attempt is missing from the message that invokes it. The rejected report
+  // runs from this very state, which is why the gap is wording and not a
+  // missing exit.
+  test("#1021: the stale-review refusal names the report that resets the attempt, and that report runs", () => {
+    const project = createTestProject();
+    projects.push(project);
+    seedAidlcMemory(project);
+    seedStateFile(project, "state-mid-inception.md");
+    const slug = "requirements-analysis";
+    const reviewer = "aidlc-product-lead-agent";
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      AIDLC_ALLOW_DIRECT_STATE_TRANSITIONS: "1",
+      AIDLC_SKIP_ARTIFACT_GUARD: "1",
+      AIDLC_SKIP_HUMAN_PRESENCE_GUARD: "1",
+      AIDLC_SKIP_SUMMARY_CONFIRMATION_GUARD: "1",
+      AIDLC_SKIP_REVIEWER_GATE_GUARD: "0",
+    };
+    const run = (tool: string, args: string[]) => {
+      const result = spawnSync(
+        process.execPath,
+        [tool, ...args, "--project-dir", project],
+        { timeout: remainingOperationTimeoutMs(NATIVE_STARTUP_TIMEOUT_MS), encoding: "utf-8", env },
+      );
+      return { status: result.status ?? -1, out: `${result.stdout ?? ""}${result.stderr ?? ""}` };
+    };
+    const outputDir = join(seededRecordDir(project), "inception", slug);
+    mkdirSync(outputDir, { recursive: true });
+    for (const name of ["requirements.md", `${slug}-questions.md`]) {
+      writeFileSync(join(outputDir, name), `# ${name}\n`, "utf-8");
+    }
+    const request = ["review", "--stage", slug, "--reviewer", reviewer, "--iteration", "1"];
+    const requested = run(LOG_TOOL, request);
+    expect(requested.status, requested.out).toBe(0);
+    const { reviewFile } = JSON.parse(requested.out) as { reviewFile: string };
+    mkdirSync(dirname(join(project, reviewFile)), { recursive: true });
+    writeFileSync(
+      join(project, reviewFile),
+      `**Verdict:** READY\n**Reviewer:** ${reviewer}\n**Iteration:** 1\n\n### Findings\n\nNo blocking findings.\n`,
+      "utf-8",
+    );
+    expect(run(LOG_TOOL, [...request, "--verdict", "READY"]).status).toBe(0);
+    expect(run(STATE_TOOL, ["gate-start", slug]).status).toBe(0);
+    appendAuditEntry("ARTIFACT_UPDATED", {
+      File: join(outputDir, "requirements.md"),
+      Tool: "Edit",
+      Context: `inception > ${slug} > requirements.md`,
+    }, project);
+
+    const refused = run(STATE_TOOL, ["approve", slug]);
+    expect(refused.status).not.toBe(0);
+    expect(refused.out).toContain("Request Changes decision resets the review attempt");
+
+    // The exit the refusal has to name is checked first, so the red below is
+    // only about the wording: the report is accepted from the very state that
+    // refused, and it is the sole producer of the boundary event.
+    const rejected = run(ORCHESTRATE_TOOL, [
+      "report", "--stage", slug, "--result", "rejected",
+      "--reason", "split the latency requirement in two",
+    ]);
+    expect(rejected.status, rejected.out).toBe(0);
+    expect(readAllAuditShards(project)).toContain("**Event**: GATE_REJECTED");
+
+    expect(refused.out).toContain(`report --stage ${slug} --result rejected`);
   });
 
   test("every way on put to the person reads in plain words; the agent's own carry none", () => {
