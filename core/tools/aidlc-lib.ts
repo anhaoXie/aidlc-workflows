@@ -10825,7 +10825,6 @@ const GUARD_REMEDY_ANSWER_ROUTES: Record<GuardRemedyOp, GuardRemedyAnswerPhases 
   // Present the summary (its prompt checkpoint) on the pick; record the
   // confirmation once the person gave it.
   "reconfirm-summary": { afterPick: summaryRoute("decision"), afterAnswer: summaryRoute("answer") },
-  "unset-unattended": null,
   "lower-fence": null,
 };
 
@@ -31362,7 +31361,6 @@ export const GUARD_REMEDY_OPS = [
   "produce-stage-output",
   "repair-source-boundary",
   "reconfirm-summary",
-  "unset-unattended",
   // Lower ONE fence for this piece of work. It reaches the human in whichever
   // shape the refusing site speaks: as this remedy on a guard-recovery ask when
   // the site builds a typed refusal (the review-freeze hook does), and as the
@@ -31910,7 +31908,7 @@ function lifecycleResetRemedies(
     if (input.humanAuthority.unattended) {
       return [
         {
-          op: "unset-unattended",
+          op: "request-changes",
           action:
             "Halt unattended execution and ask a human what should change. " +
             `Unset AIDLC_UNATTENDED, ask "What should change?" for stage ` +

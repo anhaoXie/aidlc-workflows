@@ -405,6 +405,7 @@ describe("bounded guard-remedy liveness", () => {
         humanAuthority: { freshTurn: false, unattended: true },
       });
       expect(unattended.remedies[0]?.command, marker).toBeUndefined();
+      expect(unattended.remedies[0]?.op, marker).toBe("request-changes");
       expect(unattended.remedies[0]?.action, marker).toContain(report);
       expect(unattended.remedies[0]?.action, marker).toContain(
         "Only after the human answers",
@@ -2608,6 +2609,7 @@ describe("AttemptView projections and refusal streaks", () => {
       AIDLC_SKIP_HUMAN_PRESENCE_GUARD: "1",
       AIDLC_SKIP_SUMMARY_CONFIRMATION_GUARD: "1",
       AIDLC_SKIP_REVIEWER_GATE_GUARD: "0",
+      AIDLC_UNATTENDED: "0",
     };
     const run = (tool: string, args: string[]) => {
       const result = spawnSync(
@@ -2647,9 +2649,50 @@ describe("AttemptView projections and refusal streaks", () => {
     expect(refused.out).toContain(report);
     expect(refused.out).toContain("adding it as a shell-safe `--reason` value");
 
+    // The unattended refusal carries the same instruction as a Request Changes
+    // remedy. When the person returns and answers it, that exact feedback binds
+    // the report instead of leaving an unset-unattended choice that rejects it.
+    const content = readFileSync(seededStateFile(project), "utf-8");
+    const unattended = evaluateGuardRefusal({
+      code: "REVIEW_RECOVERY_EXHAUSTED",
+      blockedAction: "review",
+      stage: slug,
+      projectDir: project,
+      stateContent: content,
+      invariant:
+        "A review attempt can be reset only through a sanctioned boundary.",
+      userMessage: "",
+      attempt: {
+        recovery: "spent",
+        summaryCoverage: "current",
+        reviewCoverage: "stale",
+        sourceCoverage: "stale",
+      },
+      humanAuthority: { freshTurn: false, unattended: true },
+    });
+    expect(unattended.remedies.map((remedy) => remedy.op)).toEqual([
+      "request-changes",
+    ]);
+    expect(unattended.remedies[0].action).toContain(report);
+    const ask = guardRecoveryAskForRefusal(unattended);
+    expect(ask).not.toBeNull();
+    const remedy = unattended.remedies[0];
+    const activeRemedy: ActiveDirectiveGuardRemedy = {
+      op: remedy.op,
+      ...(remedy.label ? { label: remedy.label } : {}),
+      action: remedy.action,
+      ...(remedy.interaction ? { interaction: remedy.interaction } : {}),
+    };
+    writeActiveDirectiveMarker(project, {
+      ...ask!,
+      remedies: [activeRemedy],
+      state_sha256: stateDigest(content),
+    });
+    const feedback = "split the latency requirement in two";
+    expect(consumeSharedDirectiveAsk(project, feedback)).toBe(true);
+
     // Follow the named report with the exact feedback its instruction requires:
     // it is accepted from the refused state and produces the boundary event.
-    const feedback = "split the latency requirement in two";
     const rejected = run(ORCHESTRATE_TOOL, [
       ...requestChangesReportArgs(slug, undefined, undefined),
       "--reason", feedback,
@@ -3264,7 +3307,7 @@ describe("unit-major resets name what they throw away", () => {
       expect(refusal.remedies.map((candidate) => candidate.op)).not.toContain("restart-stage");
     }
     const unattended = unitRefusal("-", { humanAuthority: { freshTurn: false, unattended: true } });
-    expect(unattended.remedies.find((remedy) => remedy.op === "unset-unattended")?.action)
+    expect(unattended.remedies.find((remedy) => remedy.op === "request-changes")?.action)
       .toContain(reopen);
   });
 
