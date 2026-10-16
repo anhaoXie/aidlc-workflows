@@ -31897,6 +31897,13 @@ function lifecycleResetRemedies(
       input.teamGate?.resolved === true && input.unit
         ? ` for Unit "${input.unit}"`
         : "";
+    const requestChangesReport = renderEngineInvocation(
+      {
+        route: "orchestrate",
+        args: requestChangesReportArgs(input.stage, input.unit, input.teamGate),
+      },
+      { harnessDir: harnessDir() },
+    );
     if (input.humanAuthority.unattended) {
       return [
         {
@@ -31917,7 +31924,8 @@ function lifecycleResetRemedies(
         op: "request-changes",
         action:
           `When the person already said what should change for stage "${reportStage}"${unitContext}, ` +
-          "submit Request Changes with their exact text unchanged as the report reason. " +
+          "submit Request Changes with their exact text unchanged as a single-quoted --reason by " +
+          `running \`${requestChangesReport}\`. ` +
           'Otherwise ask "What should change?" and end the turn, then submit their answer ' +
           "the same way. Either way that unlocks revision and a fresh review." +
           cost("reject"),
