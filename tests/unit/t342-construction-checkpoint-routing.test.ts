@@ -3454,6 +3454,44 @@ describe("t342 a unit-major recovery keeps every Unit's finished work", () => {
     const redone = reviewThroughLog(p, codeReview("alpha", 1));
     expect(redone.status, redone.out).toBe(0);
   }, NATIVE_FIXTURE_SETUP_TIMEOUT_MS);
+
+  // A team member's Request Changes at a team Unit's gate is a new attempt for
+  // that Unit too.
+  function teamUnits(): string {
+    const p = checkpointsOff("strict");
+    writeFileSync(seededStateFile(p), readFileSync(seededStateFile(p), "utf-8")
+      .replace("- **Unit Ownership**: solo", "- **Unit Ownership**: team\n- **Unit Gate Rhythm**: unit-end"));
+    return p;
+  }
+  function teamSendBack(p: string, unit: string, words: string) {
+    const gate = ["report", "--stage", "code-generation", "--unit", unit];
+    const opened = tool(p, "orchestrate", [...gate, "--result", "awaiting-approval"]);
+    expect(opened.status, opened.out).toBe(0);
+    policyHuman(p, `Request Changes: ${words}`);
+    const rejected = tool(p, "orchestrate", [...gate, "--result", "rejected", "--user-input", "Request Changes", "--reason", words], chat(p));
+    expect(JSON.parse(rejected.stdout).message, rejected.out).toStartWith(`Recorded rejected for unit "${unit}"`);
+  }
+
+  test("strict, team: a team Unit sent back twice at its gate, the code changing, gets each redo reviewed", () => {
+    const p = teamUnits();
+    buildReviewed(p, "alpha", alphaAt(p, 1));
+    for (const round of [1, 2]) {
+      teamSendBack(p, "alpha", `Return a clear error for an empty name (round ${round})`);
+      buildReviewed(p, "alpha", alphaAt(p, round + 1));
+    }
+    expect(next(p)).toMatchObject({ stage: "code-generation", unit: "alpha", gate: true });
+  }, NATIVE_FIXTURE_SETUP_TIMEOUT_MS);
+
+  test("strict, team: a team Unit changed again after its re-check, with no new attempt, still waits", () => {
+    const p = teamUnits();
+    buildReviewed(p, "alpha", alphaAt(p, 1));
+    teamSendBack(p, "alpha", "Return a clear error for an empty name");
+    expect(buildReviewed(p, "alpha", alphaAt(p, 2)).request?.recovery).toBe("stale-receipt");
+    alphaAt(p, 3)();
+    const again = tool(p, "log", codeReview("alpha", 2));
+    expect(again.status).not.toBe(0);
+    expect(again.out).toContain(SPENT);
+  }, NATIVE_FIXTURE_SETUP_TIMEOUT_MS);
 });
 
 // The walking skeleton gates the per-unit stages. Once they are all done or
