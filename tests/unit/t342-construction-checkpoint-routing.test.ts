@@ -3424,6 +3424,28 @@ describe("t342 status names the Unit's step and a typed switch says where the wo
     expect(directive.narration).toBe("The work picks up at the Unit checkpoint for beta.");
   }, NATIVE_FIXTURE_SETUP_TIMEOUT_MS);
 
+  // A scope switch can change the walk's own steps (a stage the new scope adds
+  // or drops moves a Unit's next step, and the summary confirmation follows the
+  // scope), so it names no place on the walk: at the checkpoint the turn ends
+  // on the switch's own lines, and on a work step the agent goes on to the
+  // step `next` hands out.
+  test("on the walk a scope switch names no place: it ends the turn at a checkpoint and goes on from a work step", () => {
+    const p = fixture();
+    cover(p, "alpha");
+    approve(p, "alpha");
+    cover(p, "beta");
+    expect(next(p).construction_checkpoint?.unit).toBe("beta");
+    const atCheckpoint = runOrchestrateNext(ORCH, p, ["--scope", "mvp"]).directive as { kind: string; message?: string; narration?: string };
+    expect(atCheckpoint.kind).toBe("print");
+    expect(atCheckpoint.message).toContain("to change scope, then print its output verbatim and stop.");
+    expect(atCheckpoint.narration).toBeUndefined();
+
+    const atWork = runOrchestrateNext(ORCH, betaAtCodeGeneration(), ["--scope", "mvp"]).directive as { kind: string; message?: string; narration?: string };
+    expect(atWork.kind).toBe("print");
+    expect(atWork.message).toContain("to change scope, then print its output verbatim and re-run next to carry on with the work.");
+    expect(atWork.narration).toBeUndefined();
+  }, NATIVE_FIXTURE_SETUP_TIMEOUT_MS);
+
   function parkedLine(p: string): string {
     const result = spawnSync(process.execPath, [ORCH, "park", "--project-dir", p], {
       timeout: remainingOperationTimeoutMs(NATIVE_STARTUP_TIMEOUT_MS), encoding: "utf-8",
