@@ -7433,6 +7433,7 @@ function handleApprove(args: string[]): void {
       pd,
       teamGate.stages,
       teamGate.unit,
+      "person",
     );
     const status = unitGateStatus(
       pd,
@@ -7601,7 +7602,12 @@ function handleApprove(args: string[]): void {
     entrypoint: "approve",
     personCall,
   });
-  const reviewFindingDispositions = approvalDispositionField(pd, stage);
+  const reviewFindingDispositions = approvalDispositionField(
+    pd,
+    stage,
+    undefined,
+    autonomousDecision ? "nobody" : "person",
+  );
 
   // Scope is required for next-stage derivation. Validate it before persisting
   // approval: a post-write routing failure would otherwise leave `[x]` as a
