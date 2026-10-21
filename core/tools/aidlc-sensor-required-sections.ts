@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { headingKey } from "./aidlc-artifact-vocabulary.ts";
-import { errorMessage, parseBoltDag, unitsBlockRepair } from "./aidlc-lib.ts";
+import { asksForHelp, errorMessage, parseBoltDag, printUsageAndExit, unitsBlockRepair } from "./aidlc-lib.ts";
+import { sensorFireUsage } from "./aidlc-runtime-paths.ts";
 
 interface Result {
 	pass: boolean;
@@ -126,6 +127,7 @@ function fail(msg: string): never {
 }
 
 export function main(argv: string[]): void {
+	if (asksForHelp(argv)) printUsageAndExit(`Usage: ${sensorFireUsage("required-sections")}`);
 	const flags = parseFlags(argv);
 
 	if (!flags.outputPath) {
