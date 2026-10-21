@@ -14175,7 +14175,8 @@ function emitUnitMajorRunStage(
         codekbCtx, kinds?.get(step.unit) ?? null,
       ) : null;
     });
-    addContextParkOffer(directive, projectDir);
+    // A checkpoint that approves on its own asks nothing, so it carries no offer.
+    if (step.checkpoint.human_required) addContextParkOffer(directive, projectDir);
     emit(directive);
     return;
   }

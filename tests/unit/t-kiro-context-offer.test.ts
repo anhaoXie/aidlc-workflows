@@ -327,7 +327,7 @@ describe("t-kiro-context-offer: a Unit's checkpoint", () => {
   const STAGES = ["functional-design", "nfr-requirements", "nfr-design", "infrastructure-design", "code-generation"];
 
   // Classic, two Units one at a time, reviews off, checkpoints on; Unit alpha's stages all built.
-  function walk(chat: string): string {
+  function walk(chat: string, autonomy: "gated" | "autonomous" = "gated"): string {
     const p = createTestProject();
     created.push(p);
     seedAidlcMemory(p);
@@ -344,7 +344,7 @@ describe("t-kiro-context-offer: a Unit's checkpoint", () => {
 - **Construction Iteration**: unit-major
 - **Construction Checkpoints**: enabled
 - **Construction Execution**: serial
-- **Construction Autonomy Mode**: gated
+- **Construction Autonomy Mode**: ${autonomy}
 - **Review Override**: none
 - **Guard Policy**: off (from scope classic)
 ## Scope Configuration
@@ -365,6 +365,7 @@ ${STAGES.map((stage) => `- [${stage === "functional-design" ? "-" : " "}] ${stag
     mkdirSync(join(p, "src"), { recursive: true });
     writeFileSync(join(p, "src", "alpha.ts"), "export const alpha = 1;\n");
     appendAuditEntry("WORKFLOW_STARTED", { Scope: "classic" }, p);
+    if (autonomy === "autonomous") appendAuditEntry("AUTONOMY_MODE_SET", { Mode: "autonomous" }, p);
     appendAuditEntry("HUMAN_TURN", { Session: chat, Origin: "person", Source: "typed" }, p);
     for (const slug of STAGES) {
       const stage = findStageBySlug(slug)!;
@@ -401,5 +402,32 @@ ${STAGES.map((stage) => `- [${stage === "functional-design" ? "-" : " "}] ${stag
     expect(first.construction_checkpoint?.unit).toBe("alpha");
     expect(first.change_notices ?? []).toContain(usageLine(86));
     expect(offered((step().change_notices ?? []).join(" "))).toBe(false);
+  });
+
+  test("a checkpoint that approves on its own says nothing and keeps the offer for a question the person is asked", () => {
+    const chat = "77777777-7777-4777-8777-777777777777";
+    const homeDir = home();
+    v2Record(homeDir, chat, 86.4);
+    const p = walk(chat, "autonomous");
+    const step = () => {
+      const result = runOrchestrateNext(join(TREES.kiro, "tools", "aidlc-orchestrate.ts"), p, [], {
+        env: hostEnv({ tree: "kiro", homeDir, chat }),
+      });
+      expect(result.directive, result.stderr).not.toBeNull();
+      return result.directive as {
+        construction_checkpoint?: { unit: string; human_required: boolean }; change_notices?: string[];
+      };
+    };
+    const automatic = step();
+    expect(automatic.construction_checkpoint?.unit).toBe("alpha");
+    expect(automatic.construction_checkpoint?.human_required).toBe(false);
+    expect(offered((automatic.change_notices ?? []).join(" "))).toBe(false);
+    const state = seededStateFile(p);
+    writeFileSync(state, readFileSync(state, "utf8").replace(
+      "- **Construction Autonomy Mode**: autonomous", "- **Construction Autonomy Mode**: gated",
+    ));
+    const asked = step();
+    expect(asked.construction_checkpoint?.human_required).toBe(true);
+    expect(asked.change_notices ?? []).toContain(usageLine(86));
   });
 });
