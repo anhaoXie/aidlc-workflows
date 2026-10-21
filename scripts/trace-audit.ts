@@ -297,6 +297,17 @@ function callText(input: Record<string, unknown>): string {
   return target !== undefined ? str(target) : clip(oneLine(JSON.stringify(input)), 200);
 }
 
+/** What the agent told the person, as a leg keeps it (tests/harness/leg-evidence.ts, `leg-evidence/words-*.ndjson`). */
+function readAgentWords(abs: string, rel: string): TraceEvent[] {
+  const events: TraceEvent[] = [];
+  readLines(abs).forEach((line, i) => {
+    const e = parseJson(line);
+    if (!e || typeof e.text !== "string") return;
+    events.push({ kind: "say", at: parseTime(e.ts), text: e.text, stage: "", src: `${rel}:${i + 1}`, turn: typeof e.turn === "number" ? e.turn : 0 });
+  });
+  return events;
+}
+
 /** One typed turn of `codex exec --json` per file (`exec-codex-<label>-<n>.log`), in turn order. */
 function readCodexTurns(files: { abs: string; rel: string; n: number }[]): TraceEvent[] {
   const events: TraceEvent[] = [];
@@ -589,7 +600,9 @@ function sourceKind(rel: string, name: string): string | null {
   if (/^process-.*\.log$/.test(name) && /(copilot-home|\.copilot)\/logs\//.test(rel)) return "copilot-log";
   if (/^rollout-.*\.jsonl$/.test(name) && rel.includes("sessions/")) return "codex-rollout";
   if (name.endsWith(".jsonl") && /(^|\/)projects\/[^/]+\/[^/]+\.jsonl$/.test(rel)) return "claude-transcript";
-  if (name.endsWith(".md") && /\/intents\/[^/]+\/audit\/[^/]+\.md$/.test(`/${rel}`)) return "audit";
+  if (/^words-.*\.ndjson$/.test(name) && /(^|\/)leg-evidence\//.test(rel)) return "agent-words";
+  if (name.endsWith(".md") && /\/aidlc\/spaces\/[^/]+\/(intents\/[^/]+\/)?audit\/[^/]+\.md$/.test(`/${rel}`)) return "audit";
+  if (name === "audit.md" && /(^|\/)leg-evidence\/audit\/[^/]+\/aidlc-docs\/audit\.md$/.test(rel)) return "audit";
   if (/^(golden|release)-journey-[a-z-]+\.json$/.test(name)) return "driver-report";
   if (name === "e2e-results.json") return "results";
   if (name.endsWith(".log") && !name.startsWith("runner") && /^[^/]+(\/[^/]+)?\/[^/]+\.log$/.test(rel) && !rel.includes("e2e-artifacts")) return "test-log";
@@ -696,6 +709,7 @@ export function auditFolder(rootIn: string, opts: AuditOptions = {}): RunAudit {
     else if (f.kind === "copilot-events") events = readCopilotEvents(f.abs, f.rel);
     else if (f.kind === "copilot-log") events = readCopilotLog(f.abs, f.rel);
     else if (f.kind === "codex-rollout") events = readCodexRollout(f.abs, f.rel);
+    else if (f.kind === "agent-words") events = readAgentWords(f.abs, f.rel);
     else if (f.kind === "audit") {
       const rows = readAudit(f.abs, f.rel);
       leg.audit.push(...rows);
@@ -709,6 +723,24 @@ export function auditFolder(rootIn: string, opts: AuditOptions = {}): RunAudit {
     }
     leg.events.push(...events);
     leg.sources.push({ kind: f.kind, path: f.rel, count: events.length });
+  }
+  // The kept words go where they were said among the leg's timed events.
+  for (const leg of legs.values()) {
+    const words = leg.events.filter((e) => e.kind === "say" && /(^|\/)leg-evidence\//.test(e.src));
+    if (words.length === 0) continue;
+    const merged = leg.events.filter((e) => !words.includes(e));
+    for (const w of words) {
+      const i = w.at === null ? -1 : merged.findIndex((e) => e.at !== null && e.at > w.at!);
+      merged.splice(i < 0 ? merged.length : i, 0, w);
+    }
+    leg.events = merged;
+  }
+  // A leg's own audit copies hold every row; a retained fixture's copy of the same shards is read once, from them.
+  for (const leg of legs.values()) {
+    const kept = (path: string) => path.includes("/leg-evidence/") || path.startsWith("leg-evidence/");
+    if (!leg.sources.some((x) => x.kind === "audit" && kept(x.path))) continue;
+    leg.audit = leg.audit.filter((r) => kept(r.src));
+    leg.sources = leg.sources.filter((x) => x.kind !== "audit" || kept(x.path));
   }
   for (const { leg, files } of codexGroups.values()) {
     const events = readCodexTurns(files);
@@ -974,13 +1006,21 @@ function eventLine(e: TraceEvent): string | null {
 
 const rowLine = (r: TraceRow) => `${r.cls}: ${r.stage || "-"} ${r.event}${r.detail ? `: ${r.detail}` : ""} (${r.evidence})`;
 
+function notKept(leg: TraceLeg): string[] {
+  const missing = [
+    ...(leg.sources.some((s) => s.kind === "audit") ? [] : ["the project's audit shard"]),
+    ...(leg.events.some((e) => e.kind === "say") ? [] : ["what the agent told the person"]),
+  ];
+  return missing.length ? [`Not kept for this leg: ${missing.join(" and ")}.`] : [];
+}
+
 /** The leg as the person lived it, within `budget` bytes: calls and replies are cut from the middle first. */
 export function storyText(leg: TraceLeg, budget = 40_000, gapMinutes = 10): string {
   const head = [
     `# ${leg.test}${leg.attempt !== null ? ` attempt ${leg.attempt}` : ""}: ${leg.harness || "unknown harness"} ${leg.os}, run ${leg.run}${leg.status ? `, ${leg.status}` : ""}`,
     "",
     `Sources: ${leg.sources.map((s) => `${s.kind} ${s.path} (${s.count})`).join("; ") || "none"}`,
-    ...(leg.sources.some((s) => s.kind === "audit") ? [] : ["Not kept for this leg: the project's audit shard."]),
+    ...notKept(leg),
     "",
     "## Rows",
     ...(leg.rows.length ? leg.rows.map(rowLine) : ["(none)"]),

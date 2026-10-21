@@ -318,6 +318,57 @@ describe("the story of a leg is what the person lived, clipped to a budget", () 
   });
 });
 
+describe("what every leg keeps beyond its trace (tests/harness/leg-evidence.ts)", () => {
+  /** An SDK leg with its kept words and audit copies, and the same intent's shard in a retained fixture too. */
+  function keptLeg(): string {
+    const root = scratch();
+    const leg = join(root, "7-full-suite-live-claude-sdk-1-Linux", "s", "e2e-artifacts", "t-kept.sdk", "attempt-1");
+    put(join(leg, "sdk-drive-5.ndjson"), jsonl([
+      { ts: at(0), event: "start", prompt: "/aidlc fix the greeter" },
+      { ts: at(0, 2), event: "tool_use", id: "t1", name: "Bash", input: { command: "bun .claude/tools/aidlc.ts engine orchestrate next" } },
+      { ts: at(0, 4), event: "next_message", turn: 2, message: "the bugfix one" },
+    ]));
+    put(join(leg, "leg-evidence", "words-5.ndjson"), jsonl([
+      { ts: at(0, 1), harness: "claude-sdk", turn: 1, text: "Here is the plan." },
+      { ts: at(0, 3), harness: "claude-sdk", turn: 1, text: "Which plan do you want?" },
+    ]));
+    const error = "## Error\n**Timestamp**: 2026-10-20T21:00:03Z\n**Event**: ERROR_LOGGED\n**Stage**: requirements-analysis\n**Tool**: aidlc-state\n**Command**: advance\n**Error**: lock timeout\n";
+    put(join(leg, "leg-evidence", "audit", "0123456789ab", "aidlc", "spaces", "default", "audit", "host-1.md"),
+      "## Sensor Failed\n**Timestamp**: 2026-10-20T21:00:02Z\n**Event**: SENSOR_FAILED\n**Sensor ID**: traceability\n**Stage slug**: user-stories\n**Findings count**: 1\n");
+    put(join(leg, "leg-evidence", "audit", "0123456789ab", "aidlc", "spaces", "default", "intents", "261020-greet", "audit", "host-1.md"), error);
+    put(join(leg, "retained-fixtures", "proj", "aidlc", "spaces", "default", "intents", "261020-greet", "audit", "host-1.md"), error);
+    return root;
+  }
+
+  test("the agent's kept words are what it said, in time order with its calls and the person's lines", () => {
+    const leg = auditFolder(keptLeg()).legs[0];
+    const story = storyText(leg);
+    const said = story.indexOf("AGENT said: Here is the plan.");
+    const ran = story.indexOf("AGENT ran: bun .claude/tools/aidlc.ts engine orchestrate next");
+    const asked = story.indexOf("AGENT said: Which plan do you want?");
+    const typed = story.indexOf("PERSON typed: the bugfix one");
+    expect([said, ran, asked, typed].every((i) => i > 0)).toBe(true);
+    expect(said < ran && ran < asked && asked < typed).toBe(true);
+    expect(story).not.toContain("Not kept for this leg");
+  });
+
+  test("its audit copies are read, a space's shard too, and a shard also in a retained fixture counts once", () => {
+    const run = auditFolder(keptLeg());
+    expect(run.rows.filter((r) => r.cls === "sensor" || r.cls === "engine-error").map((r) => `${r.cls} ${r.event}`)).toEqual([
+      "sensor SENSOR_FAILED",
+      "engine-error ERROR_LOGGED",
+    ]);
+    expect(run.legs[0].sources.filter((s) => s.kind === "audit").every((s) => s.path.includes("/leg-evidence/"))).toBe(true);
+  });
+
+  test("a leg that kept neither says so in its story", () => {
+    const root = scratch();
+    put(join(root, "7-full-suite-live-claude-sdk-1-Linux", "s", "e2e-artifacts", "t-bare.sdk", "attempt-1", "sdk-drive-6.ndjson"),
+      jsonl([{ ts: at(0), event: "start", prompt: "/aidlc status" }]));
+    expect(storyText(auditFolder(root).legs[0])).toContain("Not kept for this leg: the project's audit shard and what the agent told the person.");
+  });
+});
+
 describe("a local session folder is read the same way", () => {
   test("a Claude Code transcript gives the person's lines, the agent's words, a refused call and a gap", () => {
     const root = scratch();

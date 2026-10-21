@@ -75,6 +75,7 @@ import {
   remainingOperationTimeoutMs,
   TestBudgetExhaustedError,
 } from "./test-budget.ts";
+import { keepAgentWords, keepLegAudit } from "./leg-evidence.ts";
 import { PersonTurnLedger, unbackedFailure } from "./person-turns.ts";
 import type { PermissionRequest } from "./stock-permissions.ts";
 import { recordWindowsFolderHolderVerdict } from "./windows-folder-holders.ts";
@@ -1052,10 +1053,12 @@ export async function driveAidlc(
         // join them to their tool_result by toolUseID.
         const content = (msg as { message?: { content?: unknown } }).message
           ?.content;
+        const lead = !(msg as { parent_tool_use_id?: unknown }).parent_tool_use_id;
         if (Array.isArray(content)) {
           for (const block of content as Array<Record<string, unknown>>) {
             if (block.type === "text" && typeof block.text === "string") {
               assistantText += block.text;
+              if (lead) keepAgentWords("claude-sdk", [{ turn, text: block.text }]);
             } else if (
               block.type === "tool_use" &&
               typeof block.id === "string"
@@ -1244,6 +1247,7 @@ export async function driveAidlc(
         });
       }
     }
+    keepLegAudit(projectDir);
     if (tracePath) writeSdkTrace(tracePath, "usage", { models: transcriptUsage(claudeConfigDir) });
     if (ephemeralConfigDir && process.env.AIDLC_KEEP_TEMP !== "1") {
       await removeEphemeralConfigDir(ephemeralConfigDir);
