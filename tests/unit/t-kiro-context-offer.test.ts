@@ -71,6 +71,17 @@ function v2Record(homeDir: string, chat: string, percentage: unknown): void {
   })}\n`);
 }
 
+// Kiro CLI's default engine also logs the chat beside it, one `kind` per line;
+// a `Compaction` row is Kiro compacting the chat when it overflows, mid-turn too.
+function v2Log(homeDir: string, chat: string, kinds: string[]): void {
+  const row = (kind: string) => kind === "Prompt"
+    ? { version: "v1", kind, data: { message_id: "m1", content: [{ kind: "text", data: "go on" }], meta: {} } }
+    : kind === "Compaction"
+    ? { version: "v1", kind, data: { summary: "Earlier work.", strategy: { message_pairs_to_exclude: 2 }, messages_snapshot: [] } }
+    : { version: "v1", kind, data: { message_id: "a1", content: [] } };
+  writeFileSync(join(homeDir, ".kiro", "sessions", "cli", `${chat}.jsonl`), `${kinds.map((kind) => JSON.stringify(row(kind))).join("\n")}\n`);
+}
+
 // Kiro CLI v3 and Kiro IDE: one wrapped row per line, as @kiro/agent writes them.
 function v3Record(homeDir: string, chat: string, rows: Array<Record<string, unknown>>): void {
   const dir = join(homeDir, ".kiro", "sessions", "0123456789abcdef", chat);
@@ -174,6 +185,29 @@ describe("t-kiro-context-offer: Kiro CLI's default engine, the figure Kiro saved
     // Read only: nothing of Kiro's changed.
     v2Record(homeDir, chat, 84.3061);
     expect(homeDigest(homeDir)).toBe(before);
+  });
+
+  // Measured live on Kiro CLI 2.29.0: the chat was 85.7% at the end of a turn,
+  // Kiro compacted it part way through the next (a `Compaction` row after the
+  // turn's `Prompt`), and the figure stays the old one until the turn ends.
+  test("a compaction in this turn, after the figure was saved, is said as a summary, not as the old figure", () => {
+    const chat = "99999999-9999-4999-8999-999999999999";
+    const homeDir = home();
+    v2Record(homeDir, chat, 85.7245);
+    v2Log(homeDir, chat, ["Prompt", "AssistantMessage", "ToolResults", "Prompt", "AssistantMessage", "Compaction", "ToolResults", "AssistantMessage"]);
+    const proj = project(chat);
+    expect(report(proj, { tree: "kiro", homeDir, chat }).narration?.split("\n").at(-1)).toBe(SUMMARIZED_LINE);
+  });
+
+  test("a compaction in an earlier turn leaves the figure Kiro saved since", () => {
+    const chat = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const homeDir = home();
+    v2Record(homeDir, chat, 41);
+    v2Log(homeDir, chat, ["Prompt", "Compaction", "AssistantMessage", "Prompt", "AssistantMessage"]);
+    const proj = project(chat);
+    expect(offered(report(proj, { tree: "kiro", homeDir, chat }).narration)).toBe(false);
+    v2Record(homeDir, chat, 82);
+    expect(report(proj, { tree: "kiro", homeDir, chat }).narration?.split("\n").at(-1)).toBe(usageLine(82));
   });
 
   test("another chat at 80% hears it in its own chat", () => {

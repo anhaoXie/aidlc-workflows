@@ -2220,10 +2220,27 @@ export function kiroContextPressure(sessionId: string | undefined, since: number
     value !== null && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
   const figure = (value: unknown): number | null =>
     typeof value === "number" && Number.isFinite(value) ? value : null;
+  const cli = join(homedir(), ".kiro", "sessions", "cli");
   try {
-    const chat = JSON.parse(readFileSync(join(homedir(), ".kiro", "sessions", "cli", `${sessionId}.json`), "utf-8"));
+    const chat = JSON.parse(readFileSync(join(cli, `${sessionId}.json`), "utf-8"));
     const percent = figure(field(field(field(field(chat, "session_state"), "conversation_metadata"), "last_context_usage"), "percentage"));
-    if (percent !== null) return { kind: "usage", percent };
+    if (percent !== null) {
+      // Kiro compacts a chat that overflows, mid-turn too, and logs a
+      // `Compaction` row in <session id>.jsonl beside it; one after this
+      // turn's `Prompt` came after the saved figure (measured live on 2.29.0).
+      const log = tailText(join(cli, `${sessionId}.jsonl`), 1 << 20)?.split("\n") ?? [];
+      for (let i = log.length - 1; i >= 0; i--) {
+        let kind: unknown;
+        try {
+          kind = field(JSON.parse(log[i]), "kind");
+        } catch {
+          continue;
+        }
+        if (kind === "Prompt") break;
+        if (kind === "Compaction") return { kind: "summarized" };
+      }
+      return { kind: "usage", percent };
+    }
   } catch {
     // Not a chat of Kiro CLI's default engine, or not readable now.
   }
