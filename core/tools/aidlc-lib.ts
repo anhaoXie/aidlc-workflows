@@ -32253,7 +32253,8 @@ export type GuardLifecycleState =
 export const GUARD_REMEDY_OPS = [
   "present-approval-gate",
   // The same gate as the conductor's own step: the review cap refused a pass
-  // nobody asked for, so the findings go to the gate and the person decides there.
+  // nobody asked for, or the review freeze a write nobody asked for, so the
+  // findings or the change go to the gate and the person decides there.
   "present-findings-at-gate",
   "request-review",
   "start-recovery-review",
@@ -32365,17 +32366,18 @@ export interface GuardHumanAuthorityState {
   unattended: boolean;
 }
 
-// The one place the human-authority inputs are read. `freshTurn` is the
-// human-presence evidence for the stage's gate; `unattended` is the operator's
-// declaration that no human is watching.
+// The one place the human-authority inputs are read. `freshTurn` says the
+// person may stand behind what the agent does now: their turn since the last
+// decision, or one only answers used (a reply to the agent's own question, such
+// as "yes, add them"); `unattended` is the operator's declaration that no human
+// is watching.
 export function humanAuthorityState(
   projectDir: string | null,
   options: { freshTurn?: boolean } = {},
 ): GuardHumanAuthorityState {
+  const turn = options.freshTurn !== undefined || projectDir === null ? null : humanTurnState(projectDir);
   return {
-    freshTurn:
-      options.freshTurn ??
-      (projectDir === null ? false : humanActedSinceGate(projectDir)),
+    freshTurn: options.freshTurn ?? (turn === "acted" || turn === "answered"),
     unattended: process.env.AIDLC_UNATTENDED === "1",
   };
 }
@@ -32997,6 +32999,24 @@ export function evaluateGuardRefusal(
       executableNow: true,
     });
   } else {
+    // The review freeze refused a write to a document whose review is final,
+    // with no word from the person since the last decision: the change was the
+    // agent's own, and the freeze's own way is to quote it at the gate. A repeat
+    // still asks the person (guardRefusalStreakView), and so does a write the
+    // person may have asked for.
+    if (input.code === "REVIEW_FREEZE_ACTIVE" && !input.humanAuthority.freshTurn) {
+      const next = renderEngineInvocation({
+        route: "orchestrate",
+        args: ["next", ...(input.projectDir ? ["--project-dir", input.projectDir] : [])],
+      }, { harnessDir: harnessDir() });
+      remedies.push({
+        op: "present-findings-at-gate",
+        action: "Leave the document as its final review left it, and quote the change you meant to make at the " +
+          `next approval gate or Unit checkpoint for the person to weigh there. Carry on: run \`${next}\`.`,
+        requiresHuman: false,
+        executableNow: true,
+      });
+    }
     // The team gate needs this Unit's UNIT_COMPLETED receipt, and nothing but the
     // receipt is missing: its artifacts are already on disk (the gate checks them
     // first). Recording it is the way forward; restarting the stage or asking for

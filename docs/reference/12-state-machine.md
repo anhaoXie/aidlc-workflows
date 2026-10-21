@@ -1542,7 +1542,11 @@ exact request; and a review pass the cap refuses with nobody having asked for it
 runs with no review, the gate alone, since no review ran), or, part way through a
 Unit's step in a walk one Unit at a time, `finish-unit-step` (the Unit's step
 finished with the review it has, then `next`) before the same finish and the
-redo put to the person. `lower-fence`
+redo put to the person; and the review freeze's refusal of a write to a
+document whose review is final (`REVIEW_FREEZE_ACTIVE`), when no turn of the
+person's since the last decision stands behind it (one only answers used counts
+as theirs), offers `present-findings-at-gate` first: leave the document, quote
+the change at the next approval gate or Unit checkpoint, then `next`. `lower-fence`
 is the one remedy a refusal adds LAST, and only when the refusal is a fence
 holding. It is a `command` choice: its `operation` is
 `{kind: "lower-fence", fence}` and its `command` is the setter, so the way past
