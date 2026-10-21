@@ -1339,9 +1339,9 @@ describe("t264 (d) Kiro IDE adapter route", () => {
 // The hook says what was refused and names `next`; the question waits in the
 // refusal record and the next `next` asks it once, unless it no longer stands
 // (the stage was approved or sent back, the check was lowered) or another
-// question is already open. With no word from the person since the last
-// decision, the write was the agent's own, and the first refusal hands the agent
-// its own step instead: leave the document and quote the change at the gate.
+// question is already open. When no turn of the person's stands behind the
+// write, it was the agent's own, and the first refusal hands the agent its own
+// step instead: leave the document and quote the change at the gate.
 
 const ORCH_TOOL = join(DIST_CLAUDE, "tools", "aidlc-orchestrate.ts");
 
@@ -1416,6 +1416,11 @@ function logTool(p: string, args: string[]): void {
   expect(r.status, `${r.stdout}${r.stderr}`).toBe(0);
 }
 
+// The refused file as the hook prints it is in the platform's own path form (on
+// Windows, backslashes and the project folder as the hook resolved it), so only
+// the sentence around it is compared.
+const sentenceAroundTarget = (stderr: string) => stderr.replace(/review-freeze: "[^"]*"/, 'review-freeze: "<file>"');
+
 const opsOf = (directive: Record<string, unknown>) => (directive.remedies as { op: string }[]).map((remedy) => remedy.op);
 
 describe("t264 (d) the refusal names next; next asks the recovery question", () => {
@@ -1429,7 +1434,7 @@ describe("t264 (d) the refusal names next; next asks the recovery question", () 
     expect(stderr.trim()).toMatch(/ Next: `[^`\n]*orchestrate[^`\n]* next`\.$/);
   });
 
-  test("with no word from the person, the next `next` hands the agent its own step, once; a repeat asks the person", () => {
+  test("when no turn of the person's stands behind the write, the next `next` hands the agent its own step, once; a repeat asks the person", () => {
     const p = projBeforeGate();
     recordReview(p, "READY");
     refusedWrite(p);
@@ -1464,7 +1469,8 @@ describe("t264 (d) the refusal names next; next asks the recovery question", () 
   test("a write the person may have asked for keeps their question; the refusal reads the same", () => {
     const silent = projBeforeGate();
     recordReview(silent, "READY");
-    const sentence = refusedWrite(silent).replaceAll(silent, "<project>");
+    const sentence = sentenceAroundTarget(refusedWrite(silent));
+    expect(sentence).toContain('review-freeze: "<file>" is this stage\'s output document');
     const spoke = projBeforeGate();
     recordReview(spoke, "READY");
     personSays(spoke, "add the missing FR IDs to the requirements");
@@ -1477,7 +1483,7 @@ describe("t264 (d) the refusal names next; next asks the recovery question", () 
     personSays(answered, "yes, add them");
     logTool(answered, ["answer", "--stage", "requirements-analysis", "--details", "yes, add them"]);
     for (const [label, p] of [["spoke", spoke], ["answered", answered]] as const) {
-      expect(refusedWrite(p).replaceAll(p, "<project>"), label).toBe(sentence);
+      expect(sentenceAroundTarget(refusedWrite(p)), label).toBe(sentence);
       const asked = nextDirective(p);
       expect(asked, label).toMatchObject({
         kind: "ask",

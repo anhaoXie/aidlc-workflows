@@ -33000,7 +33000,7 @@ export function evaluateGuardRefusal(
     });
   } else {
     // The review freeze refused a write to a document whose review is final,
-    // with no word from the person since the last decision: the change was the
+    // and no turn of the person's stands behind the write: the change was the
     // agent's own, and the freeze's own way is to quote it at the gate. A repeat
     // still asks the person (guardRefusalStreakView), and so does a write the
     // person may have asked for.

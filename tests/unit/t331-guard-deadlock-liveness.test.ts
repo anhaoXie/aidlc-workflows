@@ -2362,8 +2362,8 @@ describe("AttemptView projections and refusal streaks", () => {
     expect(again.remedies.map((remedy) => remedy.label)).toEqual(["Decide at approval", "Request Changes"]);
   });
 
-  // The review freeze refused a write to a document whose review is final, with
-  // no word from the person since the last decision: the change was the agent's
+  // The review freeze refused a write to a document whose review is final, and
+  // no turn of the person's stands behind the write: the change was the agent's
   // own, so leaving the document and quoting the change at the gate is its step.
   // A repeat, or a write the person may have asked for, still asks them.
   test("a write the agent made on its own after a final review is its own step to leave and quote at the gate", () => {
