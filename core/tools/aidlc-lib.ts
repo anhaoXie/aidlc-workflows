@@ -2166,25 +2166,29 @@ function newestUserEntry(
 }
 
 // Kiro's own chat record (Kiro IDE and Kiro CLI v3 alike):
-// ~/.kiro/sessions/<workspace id>/<session id>/messages.jsonl. A typed message
-// is a `type: "user"` entry tagged `_meta.kiro.userMessageTag`; a message Kiro
-// made for the agent carries `_meta.kiro.syntheticUserMessageReason` instead
-// (measured: "agent-initiated-prompt" when a workflow finished). An entry with
-// neither, no entry for this prompt, or no record decides nothing: the record
-// may not be flushed when the hook runs.
+// ~/.kiro/sessions/<workspace id>/<session id>/messages.jsonl, found by the
+// session id alone, so the workspace hash (which follows how the folder path is
+// spelled on Windows) is never computed.
 const KIRO_SESSION_DIR_RE = /^[A-Za-z0-9_.:-]{1,128}$/;
-export function kiroChatRecordOrigin(sessionId: string | undefined, prompt: string): TurnOrigin | null {
-  if (!sessionId || !KIRO_SESSION_DIR_RE.test(sessionId) || !prompt.trim()) return null;
+function kiroChatRecordPaths(sessionId: string | undefined): string[] {
+  if (!sessionId || !KIRO_SESSION_DIR_RE.test(sessionId)) return [];
   const root = join(homedir(), ".kiro", "sessions");
-  let workspaces: string[];
   try {
-    workspaces = readdirSync(root);
+    return readdirSync(root).map((workspace) => join(root, workspace, sessionId, "messages.jsonl")).filter(existsSync);
   } catch {
-    return null;
+    return [];
   }
-  for (const workspace of workspaces) {
-    const path = join(root, workspace, sessionId, "messages.jsonl");
-    if (!existsSync(path)) continue;
+}
+
+// A typed message is a `type: "user"` entry tagged
+// `_meta.kiro.userMessageTag`; a message Kiro made for the agent carries
+// `_meta.kiro.syntheticUserMessageReason` instead (measured:
+// "agent-initiated-prompt" when a workflow finished). An entry with neither, no
+// entry for this prompt, or no record decides nothing: the record may not be
+// flushed when the hook runs.
+export function kiroChatRecordOrigin(sessionId: string | undefined, prompt: string): TurnOrigin | null {
+  if (!prompt.trim()) return null;
+  for (const path of kiroChatRecordPaths(sessionId)) {
     const entry = newestUserEntry(path, prompt, () => true);
     if (entry === null) continue;
     const meta = entry._meta;
@@ -2195,6 +2199,57 @@ export function kiroChatRecordOrigin(sessionId: string | undefined, prompt: stri
     }
     if (typeof marks.userMessageTag === "string" && marks.userMessageTag.trim()) return { kind: "person", source: "record" };
     return null;
+  }
+  return null;
+}
+
+// How full Kiro's own record says a chat is (#2574): Kiro shows the person a
+// figure but gives the agent none. Read only. Kiro CLI's default engine keeps
+// ~/.kiro/sessions/cli/<session id>.json and saves the figure there at the end
+// of each turn. Kiro CLI v3 and Kiro IDE (@kiro/agent, read in its 2.29.0
+// source) put the figure in `contextUsage` rows of the chat record, summarize
+// the chat on their own at 80%, and then append a `tombstone` row of kind
+// `summarization`; only one at or after `since` (this chat's first turn on the
+// work) counts, so a chat summarized before the work began says nothing.
+// Rows are wrapped `{id, timestamp, payload}`, as Kiro's own loader reads them.
+// Null when nothing is known.
+export type KiroContextPressure = { kind: "usage"; percent: number } | { kind: "summarized" };
+export function kiroContextPressure(sessionId: string | undefined, since: number | null): KiroContextPressure | null {
+  if (!sessionId || !KIRO_SESSION_DIR_RE.test(sessionId)) return null;
+  const field = (value: unknown, key: string): unknown =>
+    value !== null && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
+  const figure = (value: unknown): number | null =>
+    typeof value === "number" && Number.isFinite(value) ? value : null;
+  try {
+    const chat = JSON.parse(readFileSync(join(homedir(), ".kiro", "sessions", "cli", `${sessionId}.json`), "utf-8"));
+    const percent = figure(field(field(field(field(chat, "session_state"), "conversation_metadata"), "last_context_usage"), "percentage"));
+    if (percent !== null) return { kind: "usage", percent };
+  } catch {
+    // Not a chat of Kiro CLI's default engine, or not readable now.
+  }
+  for (const path of kiroChatRecordPaths(sessionId)) {
+    const lines = tailText(path, 1 << 20)?.split("\n") ?? [];
+    let percent: number | null = null;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      let row: unknown;
+      try {
+        row = JSON.parse(lines[i]);
+      } catch {
+        continue;
+      }
+      const payload = field(row, "payload");
+      const when = Date.parse(String(field(row, "timestamp")));
+      if (
+        field(payload, "type") === "tombstone" && field(payload, "kind") === "summarization" &&
+        since !== null && Number.isFinite(when) && when >= since
+      ) {
+        return { kind: "summarized" };
+      }
+      if (percent === null && field(payload, "type") === "session_metadata" && field(payload, "key") === "contextUsage") {
+        percent = figure(field(field(payload, "value"), "usagePercentage"));
+      }
+    }
+    if (percent !== null) return { kind: "usage", percent };
   }
   return null;
 }

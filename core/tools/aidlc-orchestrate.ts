@@ -353,6 +353,7 @@ import {
   markEngineTouch,
   markTurnEnd,
   kiroIdeLegacyPlanApprovalSessionId,
+  kiroContextPressure,
   relativeCodekbDir,
   relativeRecordDirForSelection,
   relativeSpaceRecordPrefix,
@@ -10931,6 +10932,7 @@ function applyGateOnlyShape(
     ].filter(Boolean).join("\n");
     if (narration) directive.narration = narration;
     addReviewCheckOffer(directive, projectDir, gateNode, unit);
+    addContextParkOffer(directive, projectDir);
   }
   directive.protocol_modules = (directive.protocol_modules ?? []).filter(
     (module) =>
@@ -14173,6 +14175,7 @@ function emitUnitMajorRunStage(
         codekbCtx, kinds?.get(step.unit) ?? null,
       ) : null;
     });
+    addContextParkOffer(directive, projectDir);
     emit(directive);
     return;
   }
@@ -15327,6 +15330,48 @@ function addReviewCheckOffer(
   const at = reply.change_notices?.lastIndexOf(found.change) ?? -1;
   if (at >= 0) reply.change_notices![at] = `${found.change} ${found.offer}`;
   else reply.narration = reply.narration ? `${reply.narration}\n${found.offer}` : found.offer;
+}
+
+// The offer to carry on in a new chat when Kiro's own record shows this chat
+// nearly full (#2574), said once per chat beside a question the person is
+// asked anyway: a stage's approval, or a Unit's checkpoint. The person's answer
+// decides; nothing parks here. The figure changes, so one key marks it heard.
+const KIRO_CONTEXT_OFFER_HEARD = "kiro-context-offer";
+function addContextParkOffer(
+  reply: { kind: string; narration?: string; change_notices?: string[] },
+  projectDir: string,
+): void {
+  const chat = engineSessionId;
+  if (!chat || isReadOnlyEngineProbe() || !humanTurnMintAllowed()) return;
+  if (!["kiro", "kiro-ide"].includes(runtimeHarnessName(projectDir))) return;
+  if (personLineHeard(projectDir, chat, KIRO_CONTEXT_OFFER_HEARD)) return;
+  let since: number | null = null;
+  try {
+    for (const row of readAuditShardEvents(projectDir)) {
+      if (auditBlockField(row.block, "Session") !== chat) continue;
+      const when = Date.parse(row.timestamp);
+      if (Number.isFinite(when) && (since === null || when < since)) since = when;
+    }
+  } catch {
+    // No first turn known: no summary counts.
+  }
+  const pressure = kiroContextPressure(chat, since);
+  const line = pressure?.kind === "summarized"
+    ? "Kiro has summarized this chat to make room, so the agent now works from a summary of what came before. " +
+      "Do you want to pause here and carry on in a new chat? I recommend it: your work is saved, and a new chat " +
+      "picks it up from the saved files."
+    : pressure?.kind === "usage" && pressure.percent >= 80
+    ? `This chat is about ${Math.round(pressure.percent)}% full by Kiro's count, and once it fills the agent ` +
+      "carries on from a summary. Do you want to pause here and carry on in a new chat? I recommend it: the work " +
+      "is saved, and a new chat picks it up from the saved files."
+    : null;
+  if (line === null) return;
+  // A step `next` builds may be sent in parts and rebuilt by `continue`, and a
+  // Unit's step has its narration rewritten on the way out: the settled lines
+  // ride both, as sayWithStepOnce's do.
+  if (reply.kind === "run-stage") settledNotices.push(line);
+  else reply.narration = reply.narration ? `${reply.narration}\n${line}` : line;
+  markPersonLinesHeard(projectDir, chat, [KIRO_CONTEXT_OFFER_HEARD]);
 }
 
 // A retired relaxed or off line needs confirmation before its notice stops. The
@@ -17184,6 +17229,7 @@ function handleReport(args: string[], projectDir: string | undefined): void {
       const unitGate = withChangeNotices(unitReply, changeNotices);
       if (unitGate.kind === "print" && (flags.result === "awaiting-approval" || flags.result === "revised")) {
         addReviewCheckOffer(unitGate, pd, node, unit);
+        addContextParkOffer(unitGate, pd);
       }
       emit(unitGate);
       return;
@@ -17456,6 +17502,7 @@ function handleReport(args: string[], projectDir: string | undefined): void {
           .filter(Boolean).join("\n");
         if (narration) gateReply.narration = narration;
         addReviewCheckOffer(gateReply, pd, node, unit);
+        addContextParkOffer(gateReply, pd);
       }
     }
     emit(gateReply);

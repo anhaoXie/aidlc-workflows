@@ -75,7 +75,7 @@ function v2Record(homeDir: string, chat: string, percentage: unknown): void {
 function v3Record(homeDir: string, chat: string, rows: Array<Record<string, unknown>>): void {
   const dir = join(homeDir, ".kiro", "sessions", "0123456789abcdef", chat);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "messages.jsonl"), rows.map((row) => JSON.stringify(row)).join("\n") + "\n");
+  writeFileSync(join(dir, "messages.jsonl"), `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
 }
 const at = (offsetMs: number) => new Date(Date.now() + offsetMs).toISOString();
 const usageRow = (percent: number, when = at(0)) => ({
@@ -186,6 +186,27 @@ describe("t-kiro-context-offer: Kiro CLI's default engine, the figure Kiro saved
     appendAuditEntry("HUMAN_TURN", { Session: two, Origin: "person", Source: "typed" }, proj);
     expect(report(proj, { tree: "kiro", homeDir, chat: one }).narration?.split("\n").at(-1)).toBe(usageLine(82));
     expect(report(proj, { tree: "kiro", homeDir, chat: two }).narration?.split("\n").at(-1)).toBe(usageLine(96));
+  });
+
+  test("the gate shown again by next (a new chat at an open gate) says it once, with the step", () => {
+    const opener = "77777777-7777-4777-8777-777777777777";
+    const chat = "88888888-8888-4888-8888-888888888888";
+    const homeDir = home();
+    const proj = project(opener);
+    expect(offered(report(proj, { tree: "kiro", homeDir, chat: opener }).narration)).toBe(false);
+    v2Record(homeDir, chat, 90.2);
+    appendAuditEntry("HUMAN_TURN", { Session: chat, Origin: "person", Source: "typed" }, proj);
+    const step = () => {
+      const result = runOrchestrateNext(join(TREES.kiro, "tools", "aidlc-orchestrate.ts"), proj, [], {
+        env: hostEnv({ tree: "kiro", homeDir, chat }),
+      });
+      expect(result.directive, result.stderr).not.toBeNull();
+      return result.directive as { gate_only?: boolean; change_notices?: string[] };
+    };
+    const shown = step();
+    expect(shown.gate_only).toBe(true);
+    expect(shown.change_notices ?? []).toContain(usageLine(90));
+    expect(offered((step().change_notices ?? []).join(" "))).toBe(false);
   });
 
   test("below 80%, no record, or a record that does not parse: nothing is said", () => {
