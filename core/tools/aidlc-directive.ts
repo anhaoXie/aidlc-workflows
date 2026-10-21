@@ -1274,7 +1274,7 @@ export function reviewVerdictNote(step: ReviewVerdictStep): string {
       return "Another review pass follows: fix what its findings name (a review that did not finish names nothing " +
         `to fix), then request the next pass with \`${step.request}\` in this turn.`;
     case "learnings":
-      return `${NO_FURTHER_PASS}say the completion summary, then run the learnings ritual and ask its question, ` +
+      return `${NO_FURTHER_PASS}say the completion summary, then run the learnings ritual and ask its questions, ` +
         `which ends the turn. The approval gate comes after their answer, with the review brief that \`${step.brief}\` prints.`;
     case "gate":
       return `${NO_FURTHER_PASS}${step.summary ? "say the completion summary, then " : ""}run ` +
