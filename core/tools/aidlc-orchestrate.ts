@@ -7915,6 +7915,34 @@ function personaSentAhead(directive: RunStageDirective): string | null {
     : null;
 }
 
+// A pipeline step names each owed link's exact command for every registered
+// repo, so a workspace of many repos can outgrow what the host shows of one
+// result. The step then keeps the commands of as many whole repos as fit, in
+// order, possibly none (the step as it was before it carried them): a link left
+// out gets its exact command from the next step or from its refusal. Decided
+// from the step alone, as the lead's persona is below.
+function fitPipelineRecord(directive: RunStageDirective): void {
+  const pipeline = directive.pipeline;
+  if (pipeline === undefined || pipeline.record.length === 0) return;
+  const record = pipeline.record;
+  const limit = directiveMaxBytes() - INLINE_RULES_MARGIN_BYTES;
+  const size = (): number => {
+    const { conductor_persona: _sentAhead, ...alone } = directive;
+    return Buffer.byteLength(JSON.stringify(alone), "utf-8");
+  };
+  if (size() <= limit) return;
+  const chains: Array<typeof record> = [];
+  for (const row of record) {
+    const last = chains.at(-1);
+    if (last !== undefined && last[0].repo === row.repo) last.push(row);
+    else chains.push([row]);
+  }
+  while (chains.length > 0 && size() > limit) {
+    chains.pop();
+    pipeline.record = chains.flat();
+  }
+}
+
 // The lead's persona rides in the run-stage itself, never on a rules part. When
 // the step would not fit with it even after its rules and the conductor persona
 // go ahead, the step lists the persona file to read instead, as it did before
@@ -8218,6 +8246,7 @@ function transportRunStage(
     held,
     persona: directive.conductor_persona === undefined ? null : sha256(directive.conductor_persona),
   };
+  fitPipelineRecord(directive);
   listLeadPersonaUnlessItFits(directive);
   const directiveHash = sha256(JSON.stringify(directive));
   const persona = personaSentAhead(directive);
