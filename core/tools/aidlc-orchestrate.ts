@@ -4637,15 +4637,18 @@ function withWorkPicksUpLine<T extends Directive>(
 }
 
 // Whether the place withWorkPicksUpLine names is still where the work picks up
-// after a switch to `newScope`: the Current Stage is still to do and the new
-// scope runs it (the switch rebuilds the plan from that scope's grid, and
-// skips a waiting stage it does not run), off a Unit-by-Unit walk, whose own
+// after a switch to `newScope`: the Current Stage is still to do, the work's
+// own recorded plan runs it (that record already holds the project-type
+// adjustment: a new project's Reverse Engineering reads SKIP there), and the
+// new scope's grid runs it (the switch rebuilds the plan from that grid, and
+// skips a waiting stage it does not run); off a Unit-by-Unit walk, whose own
 // steps a switch can change (a stage it adds or drops moves a Unit's next step,
 // and the summary confirmation follows the scope).
 function scopeSwitchKeepsPlace(pd: string, scope: string, stateContent: string, newScope: string): boolean {
   const current = (getField(stateContent, "Current Stage") ?? "").trim();
   const box = parseCheckboxes(stateContent).find((c) => c.slug === current)?.state;
   if (box === undefined || box === "completed" || box === "skipped") return false;
+  if (effectivePlanAction(current, scope, stateContent) !== "EXECUTE") return false;
   if (effectivePlanAction(current, newScope, null) !== "EXECUTE") return false;
   return !scope || unitMajorWalkBeat(pd, scope, stateContent, current) === null;
 }

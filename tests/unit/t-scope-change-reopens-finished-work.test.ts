@@ -438,6 +438,33 @@ describe("t-scope-change-reopens-finished-work: a scope switch over running work
     );
   });
 
+  // Said with the switch at Reverse Engineering's gate on existing code, "it is
+  // a new project" takes Reverse Engineering off the work's own plan first,
+  // and the switch then skips it, so no place on it is named (AIDA F1 on #2876).
+  test("a new-project word typed with the switch at Reverse Engineering's gate names no place there", () => {
+    const proj = createOrchestrationTestProject();
+    created.push(proj);
+    mkdirSync(join(proj, "src"), { recursive: true });
+    writeFileSync(join(proj, "src", "app.py"), "def greet(name):\n    return f'Hello, {name}!'\n", "utf-8");
+    writeFileSync(join(proj, "pyproject.toml"), "[project]\nname = 'app'\nversion = '0.1.0'\n", "utf-8");
+    expect(run(UTILITY, proj, ["intent-create", "--scope", "bugfix"]).rc).toBe(0);
+    expect(field(state(proj), "Project Type")).toBe("Brownfield");
+    const setup = ["workspace-scaffold", "workspace-detection", "state-init"];
+    expect(run(STATE, proj, ["checkbox", ...setup.map((s) => `${s}=completed`), "reverse-engineering=awaiting-approval"]).rc).toBe(0);
+    expect(run(STATE, proj, [
+      "set", "Current Stage=reverse-engineering", "Status=Running", "Lifecycle Phase=INCEPTION",
+      "Next Stage=requirements-analysis", "In Progress=reverse-engineering", "Last Completed Stage=state-init",
+    ]).rc).toBe(0);
+    const typed = ["--project-type", "greenfield", "--scope", "enterprise"];
+    expect(next(proj, typed).message).toContain("engine workspace reclassify --project-type greenfield");
+    expect(run(UTILITY, proj, ["reclassify", "--project-type", "greenfield", "--then-rerun"]).rc).toBe(0);
+    const print = next(proj, typed);
+    expect(print.message).toContain(`to change scope, then ${STOP}`);
+    expect(print.narration).toBeUndefined();
+    expect(actOnScopeChangePrint(proj, print)).toContain("Skipped Reverse Engineering (it was waiting for your approval)");
+    expect(box(state(proj), "reverse-engineering")).toBe("S");
+  });
+
   // The deadlock check: from the switch the chain reaches a stage's step within
   // 4 engine calls, repeats no print and asks nothing, whether the new scope
   // runs the stage (it goes on) or drops it (the stale cursor is skipped and the
