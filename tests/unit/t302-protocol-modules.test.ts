@@ -468,12 +468,16 @@ describe("t302 learnings: keeping no note is a pick", () => {
     "utf8",
   );
 
-  test("the agent asks the questions surface printed, and Keep none of these alone keeps no note", () => {
+  test("the agent asks the questions surface printed, Keep none of these first in every call", () => {
     expect(learnings).toContain("3. **Ask the structured questions `surface` printed.**");
     expect(learnings).toContain("Ask each as its own structured question with every option it lists, also when there is only one");
     expect(learnings).toContain("never fold one into another");
+    // Every call: a keep question split across calls (more notes than the
+    // tool's option limit) starts each call with it too.
     expect(learnings).toContain(
-      "**Keep none of these** picked alone keeps no note; beside other picks, the notes picked are kept.",
+      "Put **Keep none of these** first in every call of this question, so keeping no note is a pick of its own " +
+        "(some tools read a multi-select with nothing ticked as unanswered); picked alone it keeps no note, and " +
+        "beside other picks the notes picked are kept.",
     );
     expect(learnings).not.toMatch(/[Ll]eave (them )?all unticked/);
   });
