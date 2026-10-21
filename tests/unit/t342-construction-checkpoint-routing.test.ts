@@ -3376,6 +3376,84 @@ describe("t342 a unit-major recovery keeps every Unit's finished work", () => {
     cover(p, "alpha", ["code-generation"]);
     expect(next(p).construction_checkpoint?.unit).toBe("alpha");
   }, NATIVE_FIXTURE_SETUP_TIMEOUT_MS);
+
+  // With checkpoints off and Units built one at a time, a Unit's attempts are
+  // still its own: the person's redo of its step is a new attempt, and the
+  // changed code is reviewed, never refused.
+  function checkpointsOff(policy: string): string {
+    const p = policyFixture("classic", `${policy} (set by you)`, "adversarial");
+    writeFileSync(seededStateFile(p), readFileSync(seededStateFile(p), "utf-8")
+      .replace("- **Construction Checkpoints**: enabled", "- **Construction Checkpoints**: disabled"));
+    return p;
+  }
+
+  // The person asks to redo the Unit's Code Generation; the agent runs the
+  // reopen `next --stage` prints, and the code changes.
+  function reopenCodeGeneration(p: string, unit: string, version: number) {
+    policyHuman(p, `Redo Code Generation for ${unit}, please.`);
+    const printed = tool(p, "orchestrate", ["next", "--stage", "code-generation", "--unit", unit], chat(p));
+    const reopen = /Run `bun \S+aidlc-jump\.ts (reopen [^`]+)`/.exec(printed.stdout)?.[1];
+    expect(reopen, printed.out).toBeDefined();
+    const reopened = tool(p, "jump", reopen!.split(" "), chat(p));
+    expect(reopened.status, reopened.out).toBe(0);
+    writeFileSync(join(p, "src", `${unit}.ts`), `export const ${unit} = ${version};\n`);
+    cover(p, unit, ["code-generation"], false);
+  }
+
+  function redoCodeGeneration(p: string, unit: string, version: number) {
+    reopenCodeGeneration(p, unit, version);
+    const redone = reviewThroughLog(p, codeReview(unit, 1));
+    expect(redone.status, redone.out).toBe(0);
+    cover(p, unit, ["code-generation"]);
+    return redone;
+  }
+
+  for (const policy of ["strict", "relaxed", "off"]) {
+    test(`${policy}, checkpoints off: the person's two redos of a Unit's Code Generation, the code changing, are each reviewed`, () => {
+      const p = checkpointsOff(policy);
+      buildReviewed(p, "alpha", alphaAt(p, 1));
+      redoCodeGeneration(p, "alpha", 2);
+      redoCodeGeneration(p, "alpha", 3);
+      expect(next(p)).toMatchObject({ stage: "functional-design", unit: "beta" });
+    }, NATIVE_FIXTURE_SETUP_TIMEOUT_MS);
+  }
+
+  test("strict, checkpoints off: a second Unit's first redo, after the first Unit's, is reviewed", () => {
+    const p = checkpointsOff("strict");
+    buildReviewed(p, "alpha", alphaAt(p, 1));
+    redoCodeGeneration(p, "alpha", 2);
+    expect(next(p)).toMatchObject({ stage: "functional-design", unit: "beta" });
+    buildReviewed(p, "beta", () => writeFileSync(join(p, "src", "beta.ts"), "export const beta = 1;\n"));
+    expect(redoCodeGeneration(p, "beta", 2).request?.recovery).toBe("stale-receipt");
+  }, NATIVE_FIXTURE_SETUP_TIMEOUT_MS);
+
+  test("strict, checkpoints off: a reopened Unit reads its re-check unspent", () => {
+    const p = checkpointsOff("strict");
+    buildReviewed(p, "alpha", alphaAt(p, 1));
+    redoCodeGeneration(p, "alpha", 2);
+    reopenCodeGeneration(p, "alpha", 3);
+    const receipts = freshReviewReceipts(p, readFileSync(seededStateFile(p), "utf-8"), findStageBySlug("code-generation")!);
+    expect(receipts.unitRecheckReopened.has("alpha")).toBe(true);
+    expect(receipts.unitStaleProgress.get("alpha")?.recoverySpent).toBe(false);
+  }, NATIVE_FIXTURE_SETUP_TIMEOUT_MS);
+
+  test("strict, checkpoints off: a change after the re-check with no new attempt waits, and the reopen it offers lands", () => {
+    const p = checkpointsOff("strict");
+    buildReviewed(p, "alpha", alphaAt(p, 1));
+    expect(redoCodeGeneration(p, "alpha", 2).request?.recovery).toBe("stale-receipt");
+    alphaAt(p, 3)();
+    const again = tool(p, "log", codeReview("alpha", 2));
+    expect(again.status).not.toBe(0);
+    expect(again.out).toContain(SPENT);
+    const offered = /`bun \S+aidlc-jump\.ts (reopen --target code-generation --units alpha)`/.exec(again.out)?.[1];
+    expect(offered, again.out).toBeDefined();
+    const reopened = tool(p, "jump", offered!.split(" "));
+    expect(reopened.status, reopened.out).toBe(0);
+    alphaAt(p, 4)();
+    cover(p, "alpha", ["code-generation"], false);
+    const redone = reviewThroughLog(p, codeReview("alpha", 1));
+    expect(redone.status, redone.out).toBe(0);
+  }, NATIVE_FIXTURE_SETUP_TIMEOUT_MS);
 });
 
 // The walking skeleton gates the per-unit stages. Once they are all done or
