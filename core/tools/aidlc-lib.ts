@@ -14579,8 +14579,16 @@ export function checkSummaryConfirmationEvidence(
   }
   let auditRowsRead: AuditShardEvent[] | null = null;
   const readAuditRows = (): AuditShardEvent[] => (auditRowsRead ??= readAuditShardEvents(projectDir));
+  // A per-unit stage the plan runs with no Units Generation runs once at stage
+  // level: its gate and its summary are the stage's, as the Unit set below reads.
+  const stageLevelArtifacts =
+    options.stateContent !== undefined &&
+    usesStageLevelPerUnitArtifacts(
+      getField(options.stateContent ?? "", "Scope"),
+      options.stateContent,
+    );
   const finishedBeforeOn = (unit: string | null): boolean =>
-    options.workflow === undefined && (unit !== null) === isPerUnitStage(stage) &&
+    options.workflow === undefined && (unit !== null) === (isPerUnitStage(stage) && !stageLevelArtifacts) &&
     typeof options.stateContent === "string" &&
     finishedBeforeSummaryOn(projectDir, stage.slug, unit, options.stateContent, readAuditRows());
   if (finishedBeforeOn(options.unit ?? null)) {
@@ -14609,13 +14617,7 @@ export function checkSummaryConfirmationEvidence(
   if (
     declared &&
     isPerUnitStage(stage) &&
-    !(
-      options.stateContent !== undefined &&
-      usesStageLevelPerUnitArtifacts(
-        getField(options.stateContent ?? "", "Scope"),
-        options.stateContent,
-      )
-    ) &&
+    !stageLevelArtifacts &&
     options.workflow === undefined &&
     options.unit === undefined
   ) {
