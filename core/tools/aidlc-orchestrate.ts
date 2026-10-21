@@ -321,6 +321,7 @@ import {
   isPlainObject,
   parseCeremonySetting,
   pipelineLinkEvidence,
+  pipelineLinkRecord,
   pipelineLinkWayOn,
   parseBoltDag,
   type KnowledgeCommand,
@@ -7460,6 +7461,7 @@ function buildRunStageDirective(
     directive.pipeline = {
       links: evidence.links,
       completed: evidence.completed,
+      record: pipelineLinkRecord(codekbCtx.projectDir, node, evidence, singleRun),
     };
   }
   if (!singleRun && stateContent && codekbCtx) {
@@ -14998,6 +15000,27 @@ function canonicalisePhase(input: string): string | null {
 const FORWARD_RESULTS = new Set(["approved", "completed", "complete", "done"]);
 // The forward results that claim completion rather than name an approval.
 const COMPLETION_RESULTS = new Set(["completed", "complete", "done"]);
+// What the agent does after Request Changes on a pipeline stage, read from the
+// rule that decides it (guardPolicyAcceptsChanges, which pipelineAttemptFloor
+// reads too): under strict the rejection starts a fresh chain; under relaxed or
+// off the links already recorded still hold. Either way the links the attempt
+// still owes are named with their exact commands.
+function pipelineRejectedMessage(pd: string, node: GraphStage, slug: string): string {
+  const record = pipelineLinkRecord(pd, node, pipelineLinkEvidence(pd, node), false);
+  const commands = record.length === 0
+    ? ""
+    : ` Record each link with its command once its agent returns: ${record.map(({ command }) => `\`${command}\``).join(", then ")}.`;
+  if (guardPolicyAcceptsChanges(pd)) {
+    return `Recorded rejected for "${slug}". The links already recorded still hold, so only the work the person's words ask ` +
+      `to redo runs again; record a link again only after its agent has run again.${commands} Report revised when that work is done.`;
+  }
+  return `Recorded rejected for "${slug}". The rejection starts a new pipeline attempt; prior receipts no longer apply. ` +
+    `Re-run \`${aidlcToolInvocation("orchestrate")} next\`, then dispatch every missing link in ` +
+    `directive.pipeline order with the exact human feedback. Each link must perform fresh work and return before its ` +
+    `new receipt is recorded.${commands} Preserve the configured topology and reviewer policy; a targeted artifact edit does not ` +
+    `permit the conductor to replace the pipeline or reuse its previous handoffs. Report revised only after the fresh chain completes.`;
+}
+
 // What the conductor does when it reported a gate complete before asking it.
 function completionOpensGateMessage(target: string): string {
   return `${target} has not asked for approval yet, so it now waits for the person's answer. ` +
@@ -15842,7 +15865,7 @@ function checkPipelineLinkEvidence(
     message:
       `${refusal}: ${missing.join(", ")}. ` +
       pipelineLinkWayOn(pd, slug, {
-        repos: evidence.repos.length > 0,
+        commands: pipelineLinkRecord(pd, node, evidence, singleRun).map(({ command }) => command),
         singleRun,
         ...(options.approval !== undefined ? { approval: options.approval } : {}),
       }),
@@ -17415,11 +17438,7 @@ function handleReport(args: string[], projectDir: string | undefined): void {
           : completionOpensGate
           ? completionOpensGateMessage(`"${slug}"`)
           : flags.result === "rejected" && node.mode === "pipeline"
-          ? `Recorded rejected for "${slug}". The rejection starts a new pipeline attempt; prior receipts no longer apply. ` +
-            `Re-run \`${aidlcToolInvocation("orchestrate")} next\`, then dispatch every missing link in ` +
-            `directive.pipeline order with the exact human feedback. Each link must perform fresh work and return before its ` +
-            `new receipt is recorded. Preserve the configured topology and reviewer policy; a targeted artifact edit does not ` +
-            `permit the conductor to replace the pipeline or reuse its previous handoffs. Report revised only after the fresh chain completes.` +
+          ? pipelineRejectedMessage(pd, node, slug) +
             personsFeedbackSentence(personsFeedbackFromToolOutput(res.stdout))
           : `Recorded ${flags.result} for "${slug}".` +
             personsFeedbackSentence(personsFeedbackFromToolOutput(res.stdout)),

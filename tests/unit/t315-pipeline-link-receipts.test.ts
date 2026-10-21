@@ -155,6 +155,23 @@ function developerHandoffPath(proj: string, repo?: string): string {
   );
 }
 
+// The `record` rows a step owes for `links`, as the engine prints them.
+function owed(
+  proj: string,
+  links: string[],
+  options: { repo?: string; single?: boolean; invocation?: string } = {},
+): Array<{ link: string; repo?: string; command: string }> {
+  const invocation = options.invocation ?? "bun .claude/tools/aidlc-log.ts link";
+  return links.map((link) => ({
+    link,
+    ...(options.repo ? { repo: options.repo } : {}),
+    command: `${invocation} --stage ${RE_STAGE} --link ${link}` +
+      (link === LEAD ? ` --artifact ${toPosix(relative(proj, developerHandoffPath(proj, options.repo)))}` : "") +
+      (options.repo ? ` --repo ${options.repo}` : "") +
+      (options.single ? " --single" : ""),
+  }));
+}
+
 function writeDeveloperHandoff(proj: string, repo?: string): void {
   const path = developerHandoffPath(proj, repo);
   mkdirSync(dirname(path), { recursive: true });
@@ -332,7 +349,7 @@ describe("t315 pipeline link receipts", () => {
     expect(audit).toContain("**Position**: 2/2");
   });
 
-  test("refuses an out-of-order final link and a repeated link", () => {
+  test("refuses an out-of-order final link; a repeated link lands with no second receipt", () => {
     const proj = pipelineProject();
     appendAuditEntry("STAGE_STARTED", { Stage: RE_STAGE, Agent: LEAD }, proj);
 
@@ -342,8 +359,9 @@ describe("t315 pipeline link receipts", () => {
 
     expect(runLog(proj, LEAD).rc).toBe(0);
     const repeated = runLog(proj, LEAD, undefined, false, false);
-    expect(repeated.rc).not.toBe(0);
-    expect(repeated.out).toContain("already completed this attempt");
+    expect(repeated.rc, repeated.out).toBe(0);
+    expect(repeated.out).toContain('"already_recorded":true');
+    expect(currentPipelineLinkReceipts(proj, RE_STAGE)).toHaveLength(1);
   });
 
   test("a later STAGE_STARTED resets the receipt chain", () => {
@@ -614,6 +632,7 @@ describe("t315 pipeline link receipts", () => {
       expect(next.directive?.pipeline).toEqual({
         links: [LEAD, FINAL],
         completed: [],
+        record: owed(proj, [LEAD, FINAL], { invocation: linkCommand }),
       });
       // Simulate fresh developer work and its architect successor, retaining
       // the real logger's current-attempt, file-identity and ordering checks.
@@ -849,7 +868,7 @@ describe("t315 pipeline link receipts", () => {
     expect(remedies.map((remedy) => remedy.op)).toEqual(["dispatch-pipeline-links"]);
     const action = remedies[0].action;
     expect(action).toContain(`for the current run: ${FINAL}. Dispatch the missing pipeline links`);
-    const record = action.indexOf(`link --stage ${RE_STAGE} --link <agent>`);
+    const record = action.indexOf(`\`${owed(proj, [FINAL])[0].command}\``);
     const showGate = action.indexOf("orchestrate.ts next`, which shows the gate again.");
     expect(record).toBeGreaterThan(0);
     expect(showGate).toBeGreaterThan(record);
@@ -924,6 +943,7 @@ describe("t315 pipeline link receipts", () => {
     expect(result.directive?.pipeline).toEqual({
       links: [LEAD, FINAL],
       completed: [LEAD],
+      record: owed(proj, [FINAL]),
     });
   });
 
@@ -1081,6 +1101,7 @@ describe("t315 pipeline link receipts", () => {
     expect(next.directive?.pipeline).toEqual({
       links: [LEAD, FINAL],
       completed: evidence.completed,
+      record: [],
     });
     expect(state(proj, ["gate-start", RE_STAGE]).rc).toBe(0);
   });
@@ -1138,6 +1159,7 @@ describe("t315 pipeline link receipts", () => {
     expect(first.directive?.pipeline).toEqual({
       links: [LEAD, FINAL],
       completed: [],
+      record: owed(proj, [LEAD, FINAL], { single: true }),
     });
 
     expect(runLog(proj, LEAD, undefined, true).rc).toBe(0);
@@ -1155,6 +1177,7 @@ describe("t315 pipeline link receipts", () => {
     expect(resumed.directive?.pipeline).toEqual({
       links: [LEAD, FINAL],
       completed: [LEAD, FINAL],
+      record: [],
     });
     // The close names the code knowledge base in one plain line, and only
     // when every store the run covers matches the code.
@@ -1215,6 +1238,7 @@ describe("t315 pipeline link receipts", () => {
     expect(first.directive?.pipeline).toEqual({
       links: [LEAD, FINAL],
       completed: [],
+      record: owed(proj, [LEAD, FINAL], { repo: "repo-a", single: true }),
     });
     expect(
       (first.directive?.produces as string[]).every((path) =>
@@ -1243,6 +1267,7 @@ describe("t315 pipeline link receipts", () => {
     expect(resumed.directive?.pipeline).toEqual({
       links: [LEAD, FINAL],
       completed: [`repo-a:${LEAD}`, `repo-a:${FINAL}`],
+      record: [],
     });
     writeAllCodekbArtifacts(proj, "repo-a");
     expect(report(proj, [

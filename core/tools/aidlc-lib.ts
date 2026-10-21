@@ -37322,21 +37322,68 @@ export function pipelineLinkEvidence(
   return { links, repos, receipts, reusedRepos, completed, missing };
 }
 
+// The handoff files a Reverse Engineering developer receipt may name, the one
+// its command names first: a registered repo's own, or the project root's,
+// which may also carry the name codekb-path prints for the root. Null with no
+// active record.
+export function developerHandoffPaths(projectDir: string, repo: string | null): string[] | null {
+  const root = recordDir(projectDir);
+  if (root === null) return null;
+  const dir = join(root, "inception", "reverse-engineering");
+  return repo !== null
+    ? [join(dir, `developer-scan-${repo}.md`)]
+    : [join(dir, "developer-scan.md"), join(dir, `developer-scan-${codekbRepoName(projectDir)}.md`)];
+}
+
+// The exact command that records one pipeline link, so the agent fills in no
+// placeholder: Reverse Engineering's lead link names its handoff file.
+export function pipelineLinkCommand(
+  projectDir: string,
+  stage: Pick<StageEntry, "slug" | "lead_agent">,
+  link: string,
+  repo: string | null,
+  singleRun: boolean,
+): string {
+  const words = [aidlcToolInvocation("log"), "link", "--stage", stage.slug, "--link", link];
+  const handoff = stage.slug === "reverse-engineering" && link === stage.lead_agent
+    ? developerHandoffPaths(projectDir, repo)?.[0]
+    : undefined;
+  if (handoff !== undefined) words.push("--artifact", quoteCommandArgument(toPosix(relative(projectDir, handoff))));
+  if (repo !== null) words.push("--repo", quoteCommandArgument(repo));
+  if (singleRun) words.push("--single");
+  return words.join(" ");
+}
+
+// The links this attempt still owes, in chain order per repo, each with the
+// command that records it.
+export function pipelineLinkRecord(
+  projectDir: string,
+  stage: Pick<StageEntry, "slug" | "lead_agent">,
+  evidence: Pick<PipelineLinkEvidence, "missing">,
+  singleRun: boolean,
+): Array<{ link: string; repo?: string; command: string }> {
+  return evidence.missing.map(({ link, repo }) => ({
+    link,
+    ...(repo !== null ? { repo } : {}),
+    command: pipelineLinkCommand(projectDir, stage, link, repo, singleRun),
+  }));
+}
+
 // The way on for missing pipeline handoffs, one sentence for the engine's
 // refusal and the state tool's floor: the conductor's own step. The evidence
 // switch is the person's, so neither names it. At an open gate `next` shows
 // the gate only once the links are in, so it comes last there; with the
 // person's approval in hand, `approval` (the step that applies it) comes last
-// instead, so they are never asked again.
+// instead, so they are never asked again. `commands` are the missing links'
+// own, from pipelineLinkRecord.
 export function pipelineLinkWayOn(
   projectDir: string,
   slug: string,
-  options: { repos: boolean; singleRun?: boolean; gateOpen?: boolean; approval?: string },
+  options: { commands: string[]; singleRun?: boolean; gateOpen?: boolean; approval?: string },
 ): string {
   const singleRun = options.singleRun === true;
   const next = `\`${aidlcToolInvocation("orchestrate")} next${singleRun ? ` --single --stage ${slug}` : ""}\``;
-  const link = `\`${aidlcToolInvocation("log")} link --stage ${slug} ` +
-    `--link <agent>${options.repos ? " --repo <repo>" : ""}${singleRun ? " --single" : ""}\``;
+  const link = options.commands.map((command) => `\`${command}\``).join(", then ");
   const last = options.approval !== undefined
     ? `; then run ${options.approval}: the person's approval stands, so they are not asked again`
     : options.gateOpen ? `; then re-run ${next}, which shows the gate again` : "";
@@ -37345,7 +37392,7 @@ export function pipelineLinkWayOn(
     (guardPolicyAcceptsChanges(projectDir)
       ? ""
       : "Rejection starts a new attempt: earlier scans and receipts cannot certify this revision, even for a targeted artifact edit. ") +
-    `After each link returns, run ${link}${last}. ` +
+    `After each link returns, run its command: ${link}${last}. ` +
     "Do not re-stamp an old handoff or disable evidence checks to reopen the gate.";
 }
 

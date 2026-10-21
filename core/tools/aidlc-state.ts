@@ -165,6 +165,7 @@ import {
   parseRefsList,
   parseStateStageSuffixes,
   pipelineLinkEvidence,
+  pipelineLinkRecord,
   pipelineLinkWayOn,
   effectiveSupportAgentsForProject,
   producesArtifactFile,
@@ -5685,7 +5686,7 @@ function verifyPipelineLinkPrecondition(
     `Cannot complete "${stage.slug}" because these pipeline handoffs have not been ` +
       `recorded for the current run: ${missing.join(", ")}. ` +
       pipelineLinkWayOn(pd, stage.slug, {
-        repos: evidence.repos.length > 0,
+        commands: pipelineLinkRecord(pd, stage, evidence, false).map(({ command }) => command),
         gateOpen,
         ...(approval ? { approval: "the same approve command again" } : {}),
       });
